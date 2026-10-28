@@ -1,0 +1,67 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [master]
+    types: [completed]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: golf-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build release
+        run: bash scripts/package-release.sh "$RUNNER_TEMP/golf.tar.gz"
+
+      - name: Configure SSH
+        env:
+          NEXUS_SSH_KEY: ${{ secrets.NEXUS_SSH_KEY }}
+          NEXUS_KNOWN_HOSTS: ${{ secrets.NEXUS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$NEXUS_SSH_KEY" > ~/.ssh/nexus_deploy
+          chmod 0600 ~/.ssh/nexus_deploy
+          printf '%s\n' "$NEXUS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0644 ~/.ssh/known_hosts
+
+      - name: Upload and activate release
+        env:
+          RELEASE_ID: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          common=(-i ~/.ssh/nexus_deploy -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          scp "${common[@]}" "$RUNNER_TEMP/golf.tar.gz" deploy@nexus.siever.ing:/tmp/golf.tar.gz
+          ssh "${common[@]}" deploy@nexus.siever.ing "trap 'rm -f /tmp/golf.tar.gz' EXIT; sudo /etc/nexus/nexus-deploy golf /tmp/golf.tar.gz '$RELEASE_ID'"
+
+      - name: Public smoke check
+        run: curl -fsS --max-time 10 https://golf.nexus.siever.ing/health
+
+      - name: End-to-end test against production
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          BASE_URL=https://golf.nexus.siever.ing npm run e2e -- -g "two players"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: production-e2e-screenshots
+          path: artifacts/e2e
+          if-no-files-found: ignore

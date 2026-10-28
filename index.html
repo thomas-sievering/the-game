@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Golf</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='12' fill='%23f2f2ee' stroke='%233b3b48' stroke-width='2'/></svg>" />
+  </head>
+  <body>
+    <div id="stage"></div>
+
+    <section id="home" class="screen card">
+      <h1 class="logo"><span class="logo-ball"></span>Golf</h1>
+      <p class="tagline">Minigolf with friends. Fewest strokes wins.</p>
+      <label class="field">
+        <span>Nickname</span>
+        <input id="name" maxlength="16" autocomplete="off" placeholder="Your name" />
+      </label>
+      <button id="create" class="primary">Create room</button>
+      <div class="divider"><span>or join</span></div>
+      <div class="join-row">
+        <input id="code" maxlength="4" autocomplete="off" placeholder="CODE" />
+        <button id="join">Join</button>
+      </div>
+      <p id="home-error" class="error"></p>
+    </section>
+
+    <section id="lobby" class="screen card hidden">
+      <p class="muted">Room code</p>
+      <div id="lobby-code" class="room-code"></div>
+      <button id="copy-link" class="link">Copy invite link</button>
+      <ul id="lobby-players" class="player-list"></ul>
+      <button id="start" class="primary hidden">Start match</button>
+      <p id="lobby-wait" class="muted hidden">Waiting for the host to start…</p>
+      <button id="leave-lobby" class="link">Leave</button>
+    </section>
+
+    <div id="hud" class="hidden">
+      <div class="hud-top">
+        <div id="hole-info"></div>
+        <div id="turn-info"></div>
+        <div id="timer"></div>
+      </div>
+      <ul id="side-players" class="side-players"></ul>
+      <div id="power" class="power hidden"><div id="power-fill"></div></div>
+      <button id="mute" class="mute" title="Toggle sound">🔊</button>
+    </div>
+
+    <section id="scoreboard" class="screen card wide hidden">
+      <h2 id="scoreboard-title"></h2>
+      <div id="scoreboard-table"></div>
+      <p id="scoreboard-next" class="muted"></p>
+    </section>
+
+    <section id="podium" class="screen card wide hidden">
+      <h2>Final results</h2>
+      <div id="podium-blocks" class="podium"></div>
+      <div id="podium-table"></div>
+      <button id="play-again" class="primary hidden">Play again</button>
+      <p id="podium-wait" class="muted hidden">Waiting for the host…</p>
+      <button id="leave-podium" class="link">Leave</button>
+    </section>
+
+    <div id="banner" class="banner hidden"></div>
+
+    <script type="module" src="/src/client/main.ts"></script>
+  </body>
+</html>
