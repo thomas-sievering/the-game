@@ -1,8 +1,8 @@
-name: Deploy
+name: Minigolf Deploy
 
 on:
   workflow_run:
-    workflows: [CI]
+    workflows: [Minigolf CI]
     branches: [master]
     types: [completed]
   workflow_dispatch: {}
@@ -20,6 +20,9 @@ jobs:
       github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment: production
+    defaults:
+      run:
+        working-directory: minigolf
     steps:
       - uses: actions/checkout@v7
         with:
@@ -28,6 +31,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: minigolf/package-lock.json
 
       - name: Build release
         run: bash scripts/package-release.sh "$RUNNER_TEMP/golf.tar.gz"
@@ -63,5 +67,5 @@ jobs:
         if: always()
         with:
           name: production-e2e-screenshots
-          path: artifacts/e2e
+          path: minigolf/artifacts/e2e
           if-no-files-found: ignore
