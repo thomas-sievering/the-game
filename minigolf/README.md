@@ -33,4 +33,4 @@ After adding or editing a hole, run `npm run solve -- <file-substring>` to recor
 
 Pushing to `master` runs CI; on success GitHub Actions builds a release and activates it on nexus with
 `/etc/nexus/nexus-deploy golf`, then runs the two-player end-to-end test against production.
-The systemd service, Caddy host and deploy script live in the `nexus` repository (`server-config/`).
+The systemd service, Caddy host and deploy script live in the `nexus` repository (`server-config/games.nix`).
