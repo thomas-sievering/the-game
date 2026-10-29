@@ -12,6 +12,8 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const serverUrl = import.meta.env.DEV ? `${location.protocol}//${location.hostname}:2567` : location.origin;
 const client = new Client(serverUrl);
 const renderer = new Renderer();
+/** Resolves once the canvas is ready. Buttons work before that; joining waits for it. */
+let rendererReady: Promise<void> = Promise.resolve();
 
 interface Anim {
   msg: ShotMessage;
@@ -116,6 +118,7 @@ async function enter(join: () => Promise<Room<any, GolfState>>) {
   myName = name.slice(0, 16);
   localStorage.setItem("golf.name", myName);
   try {
+    await rendererReady;
     attach(await join());
   } catch (e) {
     $("home-error").textContent = errorMessage(e);
@@ -387,7 +390,7 @@ function tickUi(now: number) {
 // ── Main loop ──
 
 async function main() {
-  await renderer.init($("stage"));
+  rendererReady = renderer.init($("stage"));
 
   $<HTMLInputElement>("name").value = myName;
   const params = new URLSearchParams(location.search);
@@ -416,6 +419,7 @@ async function main() {
   $("mute").textContent = isMuted() ? "🔇" : "🔊";
   $("mute").onclick = () => ($("mute").textContent = toggleMute() ? "🔇" : "🔊");
 
+  await rendererReady;
   renderer.canvas.addEventListener("pointermove", (e) => (mouse = renderer.screenToWorld(e.clientX, e.clientY)));
   renderer.canvas.addEventListener("pointerleave", () => (mouse = null));
   renderer.canvas.addEventListener("pointerdown", (e) => {

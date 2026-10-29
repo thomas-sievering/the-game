@@ -10,6 +10,8 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const serverUrl = import.meta.env.DEV ? `${location.protocol}//${location.hostname}:2568` : location.origin;
 const client = new Client(serverUrl);
 const renderer = new Renderer();
+/** Resolves once the canvas is ready. Buttons work before that; joining waits for it. */
+let rendererReady: Promise<void> = Promise.resolve();
 
 let room: Room<any, LanesState> | null = null;
 /** Hand slot of the unit card waiting for a grid pad, or -1. */
@@ -167,6 +169,7 @@ async function enter(join: () => Promise<Room<any, LanesState>>) {
   $("home-error").textContent = "";
   localStorage.setItem("lanes.name", $<HTMLInputElement>("name").value.trim());
   try {
+    await rendererReady;
     room = await join();
   } catch (err) {
     $("home-error").textContent = err instanceof Error ? err.message : String(err);
@@ -183,8 +186,8 @@ async function enter(join: () => Promise<Room<any, LanesState>>) {
   render();
 }
 
-async function main() {
-  await renderer.init($("stage"));
+function main() {
+  rendererReady = renderer.init($("stage"));
   renderer.onCell = (cell) => {
     if (selected === -1 || !room) return;
     room.send("play", { hand: selected, cell });
@@ -215,7 +218,7 @@ async function main() {
   render();
 }
 
-void main();
+main();
 
 // Test hook for Playwright.
 (window as any).__lanes = {

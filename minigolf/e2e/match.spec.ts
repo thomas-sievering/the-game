@@ -88,6 +88,8 @@ test("two players create, join and finish hole 1", async ({ browser }) => {
 });
 
 test("a solo player plays all six holes to the podium", async ({ page }) => {
+  // Balls roll in real time; six holes take about 90 s locally and longer on CI runners.
+  test.setTimeout(360_000);
   await page.goto("/");
   await page.fill("#name", "Solo");
   await page.click("#create");
