@@ -1,0 +1,314 @@
+import { describe, expect, it } from "vitest";
+import { CARDS, STARTER_DECK, unitCard } from "../src/shared/cards";
+import {
+  type Battle,
+  BASE_HP,
+  COLS,
+  DRAW,
+  FIELD_WIDTH,
+  HAND_SIZE,
+  INVEST_COST,
+  MATCH_TICKS,
+  START_GOLD,
+  START_INCOME,
+  TICK_RATE,
+  TURRET,
+  WAVE_TICKS,
+  createBattle,
+  invest,
+  play,
+  rowCenter,
+  spawnUnit,
+  step,
+} from "../src/shared/sim";
+
+const run = (battle: Battle, ticks: number) => {
+  for (let i = 0; i < ticks; i++) step(battle);
+};
+
+/** Puts a card into hand slot 0 of a side so tests don't depend on the shuffle. */
+const give = (battle: Battle, side: 0 | 1, card: string) => {
+  battle.players[side].hand[0] = card;
+  battle.players[side].gold = 1000;
+};
+
+describe("hand and deck", () => {
+  it("deals a hand from a shuffled deck", () => {
+    const battle = createBattle();
+    for (const player of battle.players) {
+      expect(player.hand).toHaveLength(HAND_SIZE);
+      expect(player.deck).toHaveLength(STARTER_DECK.length - HAND_SIZE);
+      expect([...player.hand, ...player.deck].sort()).toEqual([...STARTER_DECK].sort());
+    }
+  });
+
+  it("different seeds deal different hands", () => {
+    const hands = new Set(Array.from({ length: 5 }, (_, i) => createBattle({ seed: i + 1 }).players[0].hand.join()));
+    expect(hands.size).toBeGreaterThan(1);
+  });
+
+  it("playing a card draws the next one and reshuffles the discard when the deck runs out", () => {
+    const battle = createBattle();
+    const player = battle.players[0];
+    player.gold = 100_000;
+    for (let i = 0; i < 25; i++) {
+      battle.tick += 1000; // keep spells off cooldown
+      expect(play(battle, 0, 0, 0)).toBeNull();
+      expect(player.hand.every(Boolean)).toBe(true);
+      expect(player.hand.length + player.deck.length + player.discard.length).toBe(STARTER_DECK.length);
+    }
+  });
+});
+
+describe("economy", () => {
+  it("pays income every second", () => {
+    const battle = createBattle();
+    run(battle, TICK_RATE * 3);
+    expect(battle.players[0].gold).toBe(START_GOLD + START_INCOME * 3);
+  });
+
+  it("charges for cards and refuses when gold is short", () => {
+    const battle = createBattle();
+    battle.players[0].hand[0] = "golem";
+    battle.players[0].gold = CARDS.golem.cost - 1;
+    expect(play(battle, 0, 0, 0)).toBe("Not enough gold");
+    expect(battle.players[0].grid[0]).toBe("");
+    battle.players[0].gold = CARDS.golem.cost;
+    expect(play(battle, 0, 0, 0)).toBeNull();
+    expect(battle.players[0].gold).toBe(0);
+  });
+
+  it("investing raises income and the next investment's price", () => {
+    const battle = createBattle();
+    battle.players[0].gold = INVEST_COST;
+    expect(invest(battle, 0)).toBeNull();
+    expect(battle.players[0].income).toBe(START_INCOME + 1);
+    expect(battle.players[0].gold).toBe(0);
+    expect(invest(battle, 0)).toBe("Not enough gold");
+  });
+
+  it("killing a unit pays its bounty to the other side", () => {
+    const battle = createBattle();
+    const victim = spawnUnit(battle, 1, "runner", 0);
+    victim.hp = 0;
+    const gold = battle.players[0].gold;
+    step(battle);
+    expect(battle.players[0].gold).toBe(gold + unitCard("runner").bounty);
+  });
+});
+
+describe("placement and waves", () => {
+  it("unit cards need a valid cell", () => {
+    const battle = createBattle();
+    give(battle, 0, "footman");
+    expect(play(battle, 0, 0)).toBe("Pick a cell on your grid");
+    expect(play(battle, 0, 0, 99)).toBe("Pick a cell on your grid");
+  });
+
+  it("placed units spawn every wave in their row, front columns further ahead", () => {
+    const battle = createBattle();
+    give(battle, 0, "footman");
+    play(battle, 0, 0, 1 * COLS + 0); // row 1, back column
+    give(battle, 0, "footman");
+    play(battle, 0, 0, 1 * COLS + 3); // row 1, front column
+    give(battle, 1, "archer");
+    play(battle, 1, 0, 2 * COLS + 3);
+    run(battle, WAVE_TICKS - 1);
+    expect(battle.units).toHaveLength(0);
+    step(battle);
+    const [back, front, archer] = battle.units;
+    expect(back.y).toBe(rowCenter(1));
+    expect(front.x).toBeGreaterThan(back.x);
+    expect(archer.side).toBe(1);
+    expect(archer.x).toBeLessThan(FIELD_WIDTH);
+    run(battle, WAVE_TICKS);
+    expect(battle.units.filter((u) => u.card === "footman").length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("placing on an occupied cell replaces the unit", () => {
+    const battle = createBattle();
+    give(battle, 0, "footman");
+    play(battle, 0, 0, 5);
+    give(battle, 0, "brute");
+    play(battle, 0, 0, 5);
+    expect(battle.players[0].grid[5]).toBe("brute");
+  });
+
+  it("swarm spawns three units", () => {
+    const battle = createBattle();
+    give(battle, 0, "swarm");
+    play(battle, 0, 0, 0);
+    run(battle, WAVE_TICKS);
+    expect(battle.units.filter((u) => u.card === "swarm")).toHaveLength(3);
+  });
+});
+
+describe("combat", () => {
+  it("a unit that reaches the enemy base breaches it for its cost and is spent", () => {
+    const battle = createBattle();
+    spawnUnit(battle, 0, "brute", 0);
+    const gold = battle.players[1].gold;
+    run(battle, 60 * TICK_RATE);
+    expect(battle.players[1].baseHp).toBe(BASE_HP - CARDS.brute.cost);
+    expect(battle.units).toHaveLength(0);
+    expect(battle.players[1].gold - gold).toBe(START_INCOME * 60); // no bounty for a breach
+  });
+
+  it("bases shoot enemies that come close", () => {
+    const battle = createBattle();
+    const runner = spawnUnit(battle, 1, "runner", 0);
+    runner.x = TURRET.range - 1;
+    runner.frozenTicks = 1000;
+    step(battle);
+    expect(runner.hp).toBe(runner.maxHp - TURRET.damage);
+  });
+
+  it("opposing melee units meet in the middle and fight to the death", () => {
+    const battle = createBattle();
+    const a = spawnUnit(battle, 0, "footman", 1);
+    const b = spawnUnit(battle, 1, "footman", 1);
+    for (let i = 0; i < 2000 && a.hp > 0 && b.hp > 0; i++) step(battle);
+    expect(Math.abs(a.x - FIELD_WIDTH / 2)).toBeLessThan(50);
+    expect(Math.min(a.hp, b.hp)).toBeLessThanOrEqual(0);
+  });
+
+  it("units leave their row to fight nearby enemies", () => {
+    const battle = createBattle();
+    const a = spawnUnit(battle, 0, "footman", 0);
+    const b = spawnUnit(battle, 1, "footman", 1);
+    a.x = 500;
+    b.x = 560;
+    step(battle);
+    expect(a.y).toBeGreaterThan(rowCenter(0));
+  });
+
+  it("ranged units shoot from range without closing in", () => {
+    const battle = createBattle();
+    const archer = spawnUnit(battle, 0, "archer", 0);
+    const dummy = spawnUnit(battle, 1, "brute", 0);
+    archer.x = 400;
+    dummy.x = 520;
+    dummy.frozenTicks = 1000;
+    run(battle, 10);
+    expect(archer.x).toBe(400);
+    expect(dummy.hp).toBeLessThan(dummy.maxHp);
+  });
+
+  it("splash damages enemies around the target", () => {
+    const battle = createBattle();
+    const bomber = spawnUnit(battle, 0, "bomber", 0);
+    const near = spawnUnit(battle, 1, "brute", 0);
+    const close = spawnUnit(battle, 1, "brute", 0);
+    const far = spawnUnit(battle, 1, "brute", 2);
+    bomber.x = 400;
+    near.x = 480;
+    close.x = 500;
+    far.x = 480;
+    for (const u of [near, close, far]) u.frozenTicks = 1000;
+    step(battle);
+    expect(near.hp).toBeLessThan(near.maxHp);
+    expect(close.hp).toBeLessThan(close.maxHp);
+    expect(far.hp).toBe(far.maxHp);
+  });
+
+  it("healers heal the most hurt ally in range", () => {
+    const battle = createBattle();
+    const medic = spawnUnit(battle, 0, "medic", 0);
+    const scratched = spawnUnit(battle, 0, "brute", 0);
+    const wounded = spawnUnit(battle, 0, "brute", 0);
+    scratched.hp -= 10;
+    wounded.hp -= 100;
+    step(battle);
+    expect(medic.x).toBe(0);
+    expect(wounded.hp).toBe(wounded.maxHp - 100 + 10);
+    expect(scratched.hp).toBe(scratched.maxHp - 10);
+  });
+});
+
+describe("spells", () => {
+  it("lightning hits the three frontmost enemies", () => {
+    const battle = createBattle();
+    const enemies = [900, 300, 600, 200, 1000].map((x) => {
+      const u = spawnUnit(battle, 1, "brute", 0);
+      u.x = x;
+      return u;
+    });
+    give(battle, 0, "lightning");
+    expect(play(battle, 0, 0)).toBeNull();
+    expect(enemies.map((u) => u.maxHp - u.hp)).toEqual([0, 60, 60, 60, 0]);
+  });
+
+  it("spells go on cooldown", () => {
+    const battle = createBattle();
+    give(battle, 0, "lightning");
+    play(battle, 0, 0);
+    give(battle, 0, "lightning");
+    expect(play(battle, 0, 0)).toBe("Lightning is on cooldown");
+  });
+
+  it("rally speeds up your units", () => {
+    const slow = createBattle();
+    const fast = createBattle();
+    const a = spawnUnit(slow, 0, "footman", 0);
+    const b = spawnUnit(fast, 0, "footman", 0);
+    give(fast, 0, "rally");
+    play(fast, 0, 0);
+    run(slow, 20);
+    run(fast, 20);
+    expect(b.x).toBeCloseTo(a.x * 1.5);
+    expect(b.x).toBeGreaterThan(a.x);
+  });
+
+  it("frost freezes enemies and mend heals allies", () => {
+    const battle = createBattle();
+    const enemy = spawnUnit(battle, 1, "footman", 0);
+    const ally = spawnUnit(battle, 0, "brute", 2);
+    ally.hp = 10;
+    give(battle, 0, "frost");
+    play(battle, 0, 0);
+    give(battle, 0, "mend");
+    play(battle, 0, 0);
+    expect(ally.hp).toBe(110);
+    const x = enemy.x;
+    run(battle, 20);
+    expect(enemy.x).toBe(x);
+  });
+});
+
+describe("match end", () => {
+  it("destroying the base wins", () => {
+    const battle = createBattle();
+    battle.players[1].baseHp = 1;
+    spawnUnit(battle, 0, "brute", 0).x = FIELD_WIDTH - 1;
+    run(battle, 5);
+    expect(battle.winner).toBe(0);
+  });
+
+  it("at the time limit the base with more HP wins, equal HP draws", () => {
+    const battle = createBattle();
+    battle.players[0].baseHp -= 1;
+    run(battle, MATCH_TICKS);
+    expect(battle.winner).toBe(1);
+
+    const even = createBattle();
+    run(even, MATCH_TICKS);
+    expect(even.winner).toBe(DRAW);
+  });
+});
+
+describe("determinism", () => {
+  it("same seed and inputs give the same battle", () => {
+    const simulate = () => {
+      const battle = createBattle({ seed: 42 });
+      for (let i = 0; i < 6000; i++) {
+        if (i % 97 === 0) for (const side of [0, 1] as const) play(battle, side, i % 4, (i * 7 + side) % 12);
+        if (i % 500 === 0) invest(battle, (i / 500) % 2 === 0 ? 0 : 1);
+        step(battle);
+      }
+      return JSON.stringify(battle);
+    };
+    const first = simulate();
+    expect(JSON.parse(first).units.length + JSON.parse(first).tick).toBeGreaterThan(0);
+    expect(simulate()).toBe(first);
+  });
+});

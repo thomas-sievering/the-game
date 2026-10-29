@@ -1,0 +1,136 @@
+import { type ArraySchema, StateView } from "@colyseus/schema";
+import { type Client, Room } from "colyseus";
+import { type Battle, type Side, TICK_RATE, createBattle, invest, play, step } from "../shared/sim";
+import { LanesState, type PlayMessage, PlayerState, UnitState } from "../shared/state";
+
+const CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // no I/O to avoid confusion with 1/0
+const CODES_CHANNEL = "$lanes-codes";
+const MAX_NAME_LENGTH = 16;
+
+export function normalizeName(raw: unknown): string {
+  const name = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LENGTH) : "";
+  return name || "Player";
+}
+
+export class LanesRoom extends Room<{ state: LanesState }> {
+  maxClients = 2;
+  state = new LanesState();
+  battle: Battle | null = null;
+
+  messages = {
+    start: (client: Client) => {
+      if (client.sessionId !== this.state.hostId || this.state.phase !== "lobby" || this.state.players.length !== 2) return;
+      this.battle = createBattle({ seed: Math.floor(Math.random() * 2147483646) + 1 });
+      this.state.phase = "playing";
+      this.lock();
+      this.sync(this.battle);
+      this.setSimulationInterval(() => this.tick(), 1000 / TICK_RATE);
+    },
+
+    play: (client: Client, message: PlayMessage) => {
+      this.act(client, (battle, side) => play(battle, side, Number(message?.hand), message?.cell === undefined ? undefined : Number(message.cell)));
+    },
+
+    invest: (client: Client) => {
+      this.act(client, (battle, side) => invest(battle, side));
+    },
+  };
+
+  /** Applies a player's action to the battle, reporting a refusal back to them. */
+  private act(client: Client, action: (battle: Battle, side: Side) => string | null) {
+    const player = this.state.players.find((p) => p.id === client.sessionId);
+    if (!this.battle || !player || this.state.phase !== "playing") return;
+    const error = action(this.battle, player.side as Side);
+    if (error) client.send("error", error);
+    this.sync(this.battle);
+  }
+
+  async onCreate() {
+    this.roomId = await this.generateCode();
+    this.state.code = this.roomId;
+  }
+
+  async onDispose() {
+    await this.presence.srem(CODES_CHANNEL, this.roomId);
+  }
+
+  onJoin(client: Client, options: { name?: unknown }) {
+    if (this.state.phase !== "lobby") throw new Error("This match has already started");
+    const name = normalizeName(options?.name);
+    if (this.state.players.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error("That name is already taken in this room");
+    }
+    const side = this.state.players.some((p) => p.side === 0) ? 1 : 0;
+    const player = new PlayerState({ id: client.sessionId, name, side });
+    this.state.players.push(player);
+    client.view = new StateView();
+    client.view.add(player);
+    if (!this.state.hostId) this.state.hostId = client.sessionId;
+  }
+
+  onLeave(client: Client) {
+    const index = this.state.players.findIndex((p) => p.id === client.sessionId);
+    if (index === -1) return;
+    if (this.state.phase === "lobby") {
+      this.state.players.splice(index, 1);
+      if (this.state.hostId === client.sessionId) this.state.hostId = this.state.players[0]?.id ?? "";
+    } else {
+      this.state.players[index].connected = false;
+    }
+  }
+
+  private tick() {
+    const battle = this.battle;
+    if (!battle || this.state.phase !== "playing") return;
+    step(battle);
+    this.sync(battle);
+    if (battle.winner !== -1) {
+      this.state.phase = "finished";
+      this.state.winner = battle.winner;
+      this.setSimulationInterval(undefined);
+    }
+  }
+
+  private sync(battle: Battle) {
+    this.state.tick = battle.tick;
+    for (const view of this.state.players) {
+      const player = battle.players[view.side as Side];
+      view.baseHp = player.baseHp;
+      view.gold = player.gold;
+      view.income = player.income;
+      view.investCost = player.investCost;
+      syncArray(view.hand, player.hand);
+      syncArray(view.grid, player.grid);
+      for (const [card, tick] of Object.entries(player.ready)) if (view.ready.get(card) !== tick) view.ready.set(card, tick);
+    }
+    if (battle.events.length) this.broadcast("fx", battle.events.splice(0));
+    const alive = new Set<string>();
+    for (const unit of battle.units) {
+      const key = String(unit.id);
+      alive.add(key);
+      const view = this.state.units.get(key);
+      const fields = { x: unit.x, y: unit.y, hp: unit.hp, hasted: unit.hasteTicks > 0, frozen: unit.frozenTicks > 0 };
+      if (view) Object.assign(view, fields);
+      else this.state.units.set(key, new UnitState({ id: unit.id, side: unit.side, card: unit.card, maxHp: unit.maxHp, ...fields }));
+    }
+    for (const key of [...this.state.units.keys()]) if (!alive.has(key)) this.state.units.delete(key);
+  }
+
+  private async generateCode(): Promise<string> {
+    const used = await this.presence.smembers(CODES_CHANNEL);
+    let code: string;
+    do {
+      code = Array.from({ length: 4 }, () => CODE_LETTERS[Math.floor(Math.random() * CODE_LETTERS.length)]).join("");
+    } while (used.includes(code));
+    await this.presence.sadd(CODES_CHANNEL, code);
+    return code;
+  }
+}
+
+function syncArray(view: ArraySchema<string>, values: string[]) {
+  for (let i = 0; i < values.length; i++) {
+    if (i >= view.length) view.push(values[i]);
+    else if (view[i] !== values[i]) view[i] = values[i];
+  }
+  while (view.length > values.length) view.pop();
+}
