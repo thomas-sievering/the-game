@@ -24,4 +24,6 @@ npm run e2e        # Playwright against BASE_URL (default http://localhost:2568,
 
 ## Deploy
 
-Not deployed yet. Needs a `lanes` service and Caddy host in the `nexus` repository, then a `lanes-deploy.yml` workflow like minigolf's.
+Pushing to `master` runs Lanes CI; on success Lanes Deploy builds a release, activates it on nexus with
+`/etc/nexus/nexus-deploy lanes`, and runs the end-to-end test against https://lanes.nexus.siever.ing.
+The systemd service (port 8811), Caddy host and deploy script live in the `nexus` repository (`server-config/games.nix`).

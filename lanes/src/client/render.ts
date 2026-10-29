@@ -44,6 +44,8 @@ interface Shown {
   lunge: number;
   lungeX: number;
   lungeY: number;
+  /** Time the unit left the state. */
+  gone?: number;
 }
 
 interface ActiveFx {
@@ -160,6 +162,13 @@ export class Renderer {
           const d = Math.hypot(dx, dy) || 1;
           Object.assign(attacker, { lunge: LUNGE_SECONDS, lungeX: dx / d, lungeY: dy / d });
         }
+      } else if (fx.type === "death") {
+        // The unit leaves the state in the same tick, so its last HP drop never arrives; show it here.
+        const victim = this.shown.get(fx.id);
+        if (victim && victim.hp > 0) {
+          this.float(`-${victim.hp}`, victim.x, victim.y - 20, 0xffffff, 15);
+          victim.hp = 0;
+        }
       } else if (fx.type === "breach") {
         const victim = fx.side === 0 ? 1 : 0;
         this.baseFlash[victim] = 0.3;
@@ -273,7 +282,12 @@ export class Renderer {
         g.rect(x - w / 2, y - r - 10, (w * Math.max(0, u.hp)) / u.maxHp, 4).fill(u.side === this.mySide ? PALETTE.hp : 0xf2a65a);
       }
     }
-    for (const id of this.shown.keys()) if (!seen.has(id)) this.shown.delete(id);
+    // Keep removed units briefly so a death event that arrives after the state patch can still find them.
+    for (const [id, s] of this.shown) {
+      if (seen.has(id)) continue;
+      s.gone ??= this.time;
+      if (this.time - s.gone > 1) this.shown.delete(id);
+    }
   }
 
   private drawEffects(dt: number): void {

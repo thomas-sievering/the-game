@@ -65,7 +65,7 @@ export type Fx =
   /** `id` is the attacker, or 0 for a base turret. */
   | { type: "hit"; id: number; side: Side; x: number; y: number; tx: number; ty: number; ranged: boolean; splash: number }
   | { type: "heal"; x: number; y: number; tx: number; ty: number }
-  | { type: "death"; side: Side; x: number; y: number }
+  | { type: "death"; id: number; side: Side; x: number; y: number }
   | { type: "breach"; side: Side; x: number; y: number; damage: number }
   | { type: "spell"; side: Side; card: string; points: [number, number][] };
 
@@ -263,7 +263,7 @@ export function step(battle: Battle): void {
     }
     if (unit.breached) continue;
     battle.players[unit.side === 0 ? 1 : 0].gold += unitCard(unit.card).bounty;
-    battle.events.push({ type: "death", side: unit.side, x: unit.x, y: unit.y });
+    battle.events.push({ type: "death", id: unit.id, side: unit.side, x: unit.x, y: unit.y });
   }
   battle.units = alive;
 
