@@ -1,7 +1,7 @@
 import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
 import { CARDS, type Card, type Role } from "../shared/cards";
-import { BASE_HP, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, TICK_RATE, WAVE_TICKS } from "../shared/sim";
+import { BASE_HP, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, SHRINE, TICK_RATE, WAVE_TICKS } from "../shared/sim";
 import { LanesState, type PlayerState } from "../shared/state";
 import { Renderer } from "./render";
 
@@ -55,12 +55,16 @@ function render() {
   if (self) {
     renderer.mySide = self.side;
     $("gold").textContent = `${self.gold} gold`;
-    $("income").textContent = `+${self.income}/s`;
+    const shrine = s.shrineOwner === self.side ? SHRINE.income : 0;
+    $("income").textContent = `+${self.income + shrine}/s`;
+    $("income").title = shrine ? `Includes +${shrine}/s from the shrine` : "";
+    $("income").classList.toggle("shrine", shrine > 0);
     $("invest").textContent = `Invest ${self.investCost} → +1/s`;
     $<HTMLButtonElement>("invest").disabled = self.gold < self.investCost;
     renderHand(self, s.tick);
   }
   renderer.setGrid([...(self?.grid ?? [])]);
+  renderer.setShrine(s.shrineOwner, s.shrineControl);
   renderer.setUnits([...s.units.values()]);
 
   $("result").classList.toggle("hidden", s.phase !== "finished");
@@ -244,6 +248,9 @@ void main();
     return [...(room?.state.players ?? [])].map((p) => p.grid?.length ?? 0);
   },
   cellOnScreen: (cell: number) => renderer.cellOnScreen(cell),
+  get shrineOwner() {
+    return room?.state.shrineOwner ?? -1;
+  },
   get winner() {
     return room?.state.winner ?? -1;
   },

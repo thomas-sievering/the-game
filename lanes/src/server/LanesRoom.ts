@@ -93,6 +93,8 @@ export class LanesRoom extends Room<{ state: LanesState }> {
 
   private sync(battle: Battle) {
     this.state.tick = battle.tick;
+    this.state.shrineOwner = battle.shrine.owner;
+    this.state.shrineControl = battle.shrine.control;
     for (const view of this.state.players) {
       const player = battle.players[view.side as Side];
       view.baseHp = player.baseHp;

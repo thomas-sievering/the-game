@@ -10,6 +10,7 @@ import {
   INVEST_COST,
   MATCH_TICKS,
   START_GOLD,
+  SHRINE,
   START_INCOME,
   TICK_RATE,
   TURRET,
@@ -272,6 +273,55 @@ describe("spells", () => {
     const x = enemy.x;
     run(battle, 20);
     expect(enemy.x).toBe(x);
+  });
+});
+
+describe("shrine", () => {
+  /** Parks a frozen unit of a side on the shrine. */
+  const hold = (battle: Battle, side: 0 | 1) => {
+    const unit = spawnUnit(battle, side, "brute", 1);
+    Object.assign(unit, { x: SHRINE.x, y: SHRINE.y, frozenTicks: 1e6 });
+    return unit;
+  };
+
+  it("is captured by the only side standing in it", () => {
+    const battle = createBattle();
+    hold(battle, 1);
+    run(battle, SHRINE.captureTicks - 1);
+    expect(battle.shrine.owner).toBe(-1);
+    run(battle, 1);
+    expect(battle.shrine.owner).toBe(1);
+    expect(battle.events).toContainEqual({ type: "shrine", owner: 1 });
+  });
+
+  it("does not move while contested", () => {
+    const battle = createBattle();
+    hold(battle, 0);
+    run(battle, 10);
+    hold(battle, 1);
+    run(battle, 100);
+    expect(battle.shrine).toEqual({ owner: -1, control: 10 });
+  });
+
+  it("turns neutral before it changes hands", () => {
+    const battle = createBattle();
+    const unit = hold(battle, 0);
+    run(battle, SHRINE.captureTicks);
+    expect(battle.shrine.owner).toBe(0);
+    unit.hp = 0;
+    hold(battle, 1);
+    run(battle, SHRINE.captureTicks + 1);
+    expect(battle.shrine.owner).toBe(-1);
+    run(battle, SHRINE.captureTicks - 1);
+    expect(battle.shrine.owner).toBe(1);
+  });
+
+  it("pays its owner extra income", () => {
+    const battle = createBattle();
+    battle.shrine = { owner: 0, control: SHRINE.captureTicks };
+    run(battle, TICK_RATE);
+    expect(battle.players[0].gold).toBe(START_GOLD + START_INCOME + SHRINE.income);
+    expect(battle.players[1].gold).toBe(START_GOLD + START_INCOME);
   });
 });
 

@@ -45,6 +45,10 @@ export const LanesState = schema(
     tick: t.number().default(0),
     /** -1 while playing, then the winning side or DRAW. */
     winner: t.int8().default(-1),
+    /** Side holding the middle shrine, or -1. */
+    shrineOwner: t.int8().default(-1),
+    /** Capture progress: positive toward side 0, negative toward side 1. */
+    shrineControl: t.number().default(0),
     players: t.array(PlayerState),
     units: t.map(UnitState),
   },

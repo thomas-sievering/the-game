@@ -203,6 +203,14 @@ button.primary {
   font-variant-numeric: tabular-nums;
 }
 
+#income.shrine {
+  color: #c9b6ff;
+}
+
+#income.shrine::after {
+  content: " ◆";
+}
+
 .economy button {
   font-size: 13px;
   padding: 6px 8px;

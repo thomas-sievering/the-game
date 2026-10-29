@@ -1,6 +1,6 @@
 import { Application, Container, Graphics, Text } from "pixi.js";
 import { CARDS, SIZE } from "../shared/cards";
-import { COLS, FIELD_HEIGHT, FIELD_WIDTH, type Fx, ROW_HEIGHT, ROWS } from "../shared/sim";
+import { COLS, FIELD_HEIGHT, FIELD_WIDTH, type Fx, ROW_HEIGHT, ROWS, SHRINE } from "../shared/sim";
 
 export const PALETTE = {
   page: 0x1e2230,
@@ -19,6 +19,7 @@ export const PALETTE = {
   frost: 0x9fdcff,
   haste: 0xffd166,
   lightning: 0xfff3a0,
+  shrine: 0xc9b6ff,
   white: 0xffffff,
 };
 
@@ -71,7 +72,7 @@ const HUD_TOP = 80;
 const HUD_BOTTOM = 210;
 /** Higher is snappier; positions arrive 20 times a second. */
 const SMOOTHING = 18;
-const FX_SECONDS = { hit: 0.3, heal: 0.4, death: 0.5, breach: 0.8, spell: 0.7 };
+const FX_SECONDS = { hit: 0.3, heal: 0.4, death: 0.5, breach: 0.8, spell: 0.7, shrine: 0.9 };
 const FLASH_SECONDS = 0.12;
 const LUNGE_SECONDS = 0.16;
 const SPAWN_SECONDS = 0.2;
@@ -96,6 +97,7 @@ export class Renderer {
   private floating: Floater[] = [];
   private latest: UnitView[] = [];
   private myGrid: string[] = [];
+  private shrine = { owner: -1, control: 0 };
   private hoverCell = -1;
   private shake = 0;
   private baseFlash = [0, 0];
@@ -151,6 +153,10 @@ export class Renderer {
     this.myGrid = grid;
   }
 
+  setShrine(owner: number, control: number): void {
+    this.shrine = { owner, control };
+  }
+
   addFx(events: Fx[]): void {
     for (const fx of events) {
       this.active.push({ fx, age: 0, life: FX_SECONDS[fx.type] });
@@ -174,6 +180,9 @@ export class Renderer {
         this.baseFlash[victim] = 0.3;
         if (victim === this.mySide) this.shake = Math.min(14, this.shake + 6 + fx.damage / 10);
         this.float(`-${fx.damage}`, this.vx(fx.x), fx.y, 0xff8a7a, 30);
+      } else if (fx.type === "shrine" && fx.owner !== -1) {
+        const text = fx.owner === this.mySide ? `Shrine +${SHRINE.income}/s` : "Shrine lost";
+        this.float(text, this.vx(SHRINE.x), SHRINE.y - SHRINE.radius - 10, this.color(fx.owner), 22);
       }
     }
   }
@@ -340,6 +349,9 @@ export class Renderer {
           const d = 6 + 30 * t;
           g.circle(x + Math.cos(a) * d, fx.y + Math.sin(a) * d, 4 * alpha + 1).fill({ color, alpha });
         }
+      } else if (fx.type === "shrine") {
+        const color = fx.owner === -1 ? PALETTE.shrine : this.color(fx.owner);
+        g.circle(this.vx(SHRINE.x), SHRINE.y, SHRINE.radius * (1 + t)).stroke({ color, width: 8 * alpha + 1, alpha });
       } else {
         this.drawSpell(g, fx, t);
       }
@@ -408,6 +420,7 @@ export class Renderer {
         g.poly([x, y - 8, x + 8, y, x, y + 8, x + 3, y]).fill({ color: 0xffffff, alpha: 0.03 });
       }
     }
+    this.drawShrine(g);
     for (const [x, side] of [
       [-BASE_WIDTH, this.mySide],
       [FIELD_WIDTH, 1 - this.mySide],
@@ -421,6 +434,26 @@ export class Renderer {
         this.baseFlash[side] = Math.max(0, this.baseFlash[side] - dt);
       }
     }
+  }
+
+  /** Neutral capture point: tinted by its owner, with a ring that fills toward whoever is taking it. */
+  private drawShrine(g: Graphics): void {
+    const { owner, control } = this.shrine;
+    const x = this.vx(SHRINE.x);
+    const r = SHRINE.radius;
+    const tint = owner === -1 ? PALETTE.shrine : this.color(owner);
+    g.circle(x, SHRINE.y, r).fill({ color: tint, alpha: owner === -1 ? 0.06 : 0.14 });
+    g.circle(x, SHRINE.y, r).stroke({ color: tint, width: 2, alpha: 0.35 });
+    const k = Math.abs(control) / SHRINE.captureTicks;
+    if (k > 0 && k < 1) {
+      const toward = control > 0 ? 0 : 1;
+      const start = -Math.PI / 2;
+      g.arc(x, SHRINE.y, r, start, start + k * Math.PI * 2).stroke({ color: this.color(toward), width: 5, alpha: 0.9 });
+    }
+    const s = 14 + Math.sin(this.time * 3) * 1.5;
+    g.poly([x, SHRINE.y - s, x + s * 0.7, SHRINE.y, x, SHRINE.y + s, x - s * 0.7, SHRINE.y])
+      .fill({ color: tint, alpha: owner === -1 ? 0.5 : 0.9 })
+      .stroke({ color: PALETTE.outline, width: 2 });
   }
 
   private fit(): void {

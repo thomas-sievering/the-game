@@ -25,6 +25,8 @@ export const COLUMN_SPAWN_STEP = 15;
 export const DRAW = 2;
 /** Each base shoots the nearest enemy in reach. */
 export const TURRET = { damage: 25, range: 160, attackTicks: 20 };
+/** Neutral shrine in the middle of the centre lane. Units standing in it alone capture it; the owner earns extra gold per second. */
+export const SHRINE = { x: FIELD_WIDTH / 2, y: FIELD_HEIGHT / 2, radius: 70, captureTicks: 60, income: 2 };
 
 export type Side = 0 | 1;
 
@@ -67,7 +69,15 @@ export type Fx =
   | { type: "heal"; x: number; y: number; tx: number; ty: number }
   | { type: "death"; id: number; side: Side; x: number; y: number }
   | { type: "breach"; side: Side; x: number; y: number; damage: number }
-  | { type: "spell"; side: Side; card: string; points: [number, number][] };
+  | { type: "spell"; side: Side; card: string; points: [number, number][] }
+  /** The shrine changed hands; `owner` is -1 when it turned neutral. */
+  | { type: "shrine"; owner: Side | -1 };
+
+export interface Shrine {
+  owner: Side | -1;
+  /** From -SHRINE.captureTicks (held by side 1) to SHRINE.captureTicks (held by side 0). */
+  control: number;
+}
 
 export interface Battle {
   tick: number;
@@ -75,6 +85,7 @@ export interface Battle {
   seed: number;
   units: Unit[];
   players: [Player, Player];
+  shrine: Shrine;
   /** -1 while playing, then the winning side or DRAW. */
   winner: Side | typeof DRAW | -1;
   /** Visual events since the last drain; not needed for the outcome. */
@@ -93,6 +104,7 @@ export function createBattle({ seed = 1, decks = [STARTER_DECK, STARTER_DECK] }:
     seed: seed % 2147483647 || 1,
     units: [],
     players: [createPlayer(), createPlayer()],
+    shrine: { owner: -1, control: 0 },
     winner: -1,
     events: [],
   };
@@ -248,12 +260,18 @@ export function ticksToWave(battle: Battle): number {
 export function step(battle: Battle): void {
   if (battle.winner !== -1) return;
   battle.tick++;
-  if (battle.tick % TICK_RATE === 0) for (const player of battle.players) player.gold += player.income;
+  if (battle.tick % TICK_RATE === 0) {
+    for (const side of [0, 1] as const) {
+      const player = battle.players[side];
+      player.gold += player.income + (battle.shrine.owner === side ? SHRINE.income : 0);
+    }
+  }
   if (battle.tick % WAVE_TICKS === 0) spawnWave(battle);
 
   for (const side of [0, 1] as const) fireTurret(battle, side);
   for (const unit of battle.units) if (unit.hp > 0) act(battle, unit);
   separate(battle);
+  contestShrine(battle);
 
   const alive: Unit[] = [];
   for (const unit of battle.units) {
@@ -271,6 +289,26 @@ export function step(battle: Battle): void {
   if (hp0 <= 0 || hp1 <= 0 || battle.tick >= MATCH_TICKS) {
     battle.winner = hp0 === hp1 || (hp0 <= 0 && hp1 <= 0) ? DRAW : hp0 > hp1 ? 0 : 1;
   }
+}
+
+/** Moves shrine control toward the only side with living units inside it; contested or empty leaves it as is. */
+function contestShrine(battle: Battle): void {
+  const present = [false, false];
+  for (const unit of battle.units) {
+    if (unit.hp <= 0) continue;
+    const dx = unit.x - SHRINE.x;
+    const dy = unit.y - SHRINE.y;
+    if (dx * dx + dy * dy <= SHRINE.radius * SHRINE.radius) present[unit.side] = true;
+  }
+  if (present[0] === present[1]) return;
+  const shrine = battle.shrine;
+  const cap = SHRINE.captureTicks;
+  shrine.control = Math.max(-cap, Math.min(cap, shrine.control + (present[0] ? 1 : -1)));
+  const before = shrine.owner;
+  if (shrine.control === cap) shrine.owner = 0;
+  else if (shrine.control === -cap) shrine.owner = 1;
+  else if ((shrine.owner === 0 && shrine.control <= 0) || (shrine.owner === 1 && shrine.control >= 0)) shrine.owner = -1;
+  if (shrine.owner !== before) battle.events.push({ type: "shrine", owner: shrine.owner });
 }
 
 /** Nudges overlapping allies apart so a wave reads as a group, not a single blob. */

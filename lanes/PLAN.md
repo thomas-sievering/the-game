@@ -38,6 +38,7 @@ A browser-based 1v1 deckbuilding auto battler in the spirit of StarCraft II's "D
 
 - **Board:** horizontal battlefield, your base on the left, the enemy's mirrored on the right. Each player has a 3-row × 4-column build grid behind their base. A unit's row is the row it spawns and walks in, and front columns spawn slightly ahead. Units can cross rows to reach targets.
 - **Win:** destroy the enemy base (1500 HP). A unit that reaches the enemy base breaches it once for damage equal to its card cost and is spent, so each wave is its own push instead of a growing death ball. Bases have a short-range turret. If neither base falls by 10:00, the base with more HP left wins; equal HP is a draw.
+- **Shrine:** a neutral capture point sits in the middle of the centre lane. Units standing in it with no enemy units there capture it in 3 s (a held shrine first turns neutral). The owner earns +2 gold per second.
 - **Waves:** every 20 s. Each placed unit spawns once per wave, and placements are permanent for the match (Desert Strike rules).
 - **Economy:** gold trickles in each second, plus a bounty per kill. Placing a unit costs gold, and so does a spell. Spells also have a cooldown. A player can invest gold for +1 income per second, and each investment costs more. Placing a unit on an occupied cell replaces it.
 - **Hand:** your deck is 10 cards; you hold a hand of 4 drawn from it. Playing a card draws the next one, and the deck reshuffles when empty.
