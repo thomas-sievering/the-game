@@ -28,20 +28,41 @@ function me(): PlayerState | undefined {
   return room ? [...room.state.players].find((p) => p.id === room!.sessionId) : undefined;
 }
 
+function renderLobby(s: LanesState) {
+  show("lobby");
+  $("lobby-code").textContent = s.code;
+  const isHost = s.hostId === room!.sessionId;
+  const seatFree = s.players.length < 2;
+  /** Host tag plus, for the host, a button that moves the person to the other list. */
+  const rowEnd = (id: string, spectate: boolean) => {
+    const tag = id === s.hostId ? '<span class="tag">host</span>' : "";
+    const move =
+      isHost && (spectate || seatFree)
+        ? `<button data-id="${escapeHtml(id)}" data-spectate="${spectate}">${spectate ? "Spectate" : "Play"}</button>`
+        : "";
+    return `<span class="row-end">${tag}${move}</span>`;
+  };
+  $("lobby-players-title").textContent = `Players ${s.players.length}/2`;
+  $("lobby-players").innerHTML = [...s.players].map((p) => `<li>${escapeHtml(p.name)}${rowEnd(p.id, true)}</li>`).join("");
+  $("lobby-spectators").innerHTML = [...s.spectators].map((sp) => `<li>👁 ${escapeHtml(sp.name)}${rowEnd(sp.id, false)}</li>`).join("");
+  $("lobby-spectators-box").classList.toggle("hidden", s.spectators.length === 0);
+  for (const button of document.querySelectorAll<HTMLButtonElement>("#lobby button[data-id]")) {
+    button.onclick = () => room?.send("spectate", { id: button.dataset.id, spectate: button.dataset.spectate === "true" });
+  }
+  $("start").classList.toggle("hidden", !isHost || s.players.length !== 2);
+  const spectating = !me() ? "You're spectating. " : "";
+  $("lobby-wait").textContent =
+    s.players.length < 2 ? `${spectating}Waiting for players…` : isHost ? "" : `${spectating}Waiting for the host to start…`;
+}
+
 function render() {
   const s = room?.state;
   if (!s) return show("home");
-  if (s.phase === "lobby") {
-    show("lobby");
-    $("lobby-code").textContent = s.code;
-    $("lobby-players").innerHTML = [...s.players].map((p) => `<li>${escapeHtml(p.name)}</li>`).join("");
-    const isHost = s.hostId === room!.sessionId;
-    $("start").classList.toggle("hidden", !isHost || s.players.length !== 2);
-    $("lobby-wait").textContent = s.players.length < 2 ? "Waiting for an opponent…" : isHost ? "" : "Waiting for the host to start…";
-    return;
-  }
+  if (s.phase === "lobby") return renderLobby(s);
   show("game");
   const self = me();
+  $("spectating").classList.toggle("hidden", !!self);
+  document.querySelector(".bottom")!.classList.toggle("hidden", !self);
   const bySide = (side: number) => [...s.players].find((p) => p.side === side);
   const sides = { me: self?.side ?? 0, them: 1 - (self?.side ?? 0) };
   for (const el of document.querySelectorAll<HTMLElement>(".base")) {
@@ -242,6 +263,9 @@ main();
   },
   get side() {
     return me()?.side ?? -1;
+  },
+  get spectating() {
+    return !!room && !me();
   },
   get spellsCast() {
     return me()?.ready.size ?? 0;

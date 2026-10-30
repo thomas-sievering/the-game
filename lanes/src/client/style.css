@@ -92,6 +92,52 @@ button.primary {
   text-transform: uppercase;
 }
 
+.list-title {
+  margin: 4px 0 -4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+#lobby-spectators-box .list-title {
+  margin-bottom: 8px;
+}
+
+.player-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.player-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.player-list .row-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.player-list .tag {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.player-list button {
+  padding: 2px 8px;
+  font-size: 13px;
+}
+
 .room-code {
   font-size: 40px;
   font-weight: 700;

@@ -23,7 +23,12 @@
     <section id="lobby" class="screen card hidden">
       <p class="muted">Room code</p>
       <div id="lobby-code" class="room-code"></div>
-      <ul id="lobby-players"></ul>
+      <p id="lobby-players-title" class="list-title"></p>
+      <ul id="lobby-players" class="player-list"></ul>
+      <div id="lobby-spectators-box" class="hidden">
+        <p class="list-title">Spectators</p>
+        <ul id="lobby-spectators" class="player-list"></ul>
+      </div>
       <button id="start" class="primary hidden">Start match</button>
       <p id="lobby-wait" class="muted"></p>
     </section>
@@ -31,7 +36,7 @@
     <div id="hud" class="hidden">
       <div class="top">
         <div class="base" data-who="me"><span class="base-name"></span><div class="bar"><div class="fill"></div></div><span class="base-hp"></span></div>
-        <div class="clock"><div id="match-time"></div><div id="wave-time" class="muted"></div></div>
+        <div class="clock"><div id="match-time"></div><div id="wave-time" class="muted"></div><div id="spectating" class="muted hidden">Spectating</div></div>
         <div class="base" data-who="them"><span class="base-name"></span><div class="bar"><div class="fill"></div></div><span class="base-hp"></span></div>
       </div>
       <div class="bottom">

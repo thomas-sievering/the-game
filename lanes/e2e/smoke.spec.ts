@@ -9,6 +9,7 @@ type Lanes = {
   hand: string[];
   grid: string[];
   spellsCast: number;
+  spectating: boolean;
   visibleGrids: number[];
   cellOnScreen: (cell: number) => { x: number; y: number };
 };
@@ -38,6 +39,54 @@ async function castSpell(page: Page): Promise<boolean> {
   await expect.poll(() => lanes(page, (l) => l.spellsCast)).toBeGreaterThan(0);
   return true;
 }
+
+test("the host spectates and a latecomer watches mid-match", async ({ browser }) => {
+  const pages = await Promise.all([0, 1, 2, 3].map(async () => (await browser.newContext()).newPage()));
+  const [alice, bob, carol, dave] = pages;
+
+  await alice.goto("/");
+  await alice.fill("#name", "Alice");
+  await alice.click("#create");
+  await expect(alice.locator("#lobby-code")).toHaveText(/^[A-Z]{4}$/);
+  const code = await alice.locator("#lobby-code").innerText();
+  for (const [page, name] of [
+    [bob, "Bob"],
+    [carol, "Carol"],
+  ] as const) {
+    await page.goto("/");
+    await page.fill("#name", name);
+    await page.fill("#code", code);
+    await page.click("#join");
+  }
+  // The room is full, so Carol lands on the spectator list.
+  await expect(alice.locator("#lobby-spectators li", { hasText: "Carol" })).toBeVisible();
+  await expect(bob.locator("#lobby button[data-id]")).toHaveCount(0);
+
+  await alice.locator("#lobby-players li", { hasText: "Alice" }).getByRole("button", { name: "Spectate" }).click();
+  await alice.locator("#lobby-spectators li", { hasText: "Carol" }).getByRole("button", { name: "Play" }).click();
+  await expect(alice.locator("#lobby-players li")).toHaveText([/Bob/, /Carol/]);
+  await alice.screenshot({ path: shots("spectate-1-lobby") });
+
+  await alice.click("#start");
+  await expect.poll(() => lanes(carol, (l) => l.phase)).toBe("playing");
+  await expect(carol.locator(".hand-card strong")).toHaveCount(4);
+  expect(await placeUnit(carol, 5)).toBe(true);
+
+  await dave.goto("/");
+  await dave.fill("#name", "Dave");
+  await dave.fill("#code", code);
+  await dave.click("#join");
+  for (const page of [alice, dave]) {
+    await expect.poll(() => lanes(page, (l) => l.phase)).toBe("playing");
+    expect(await lanes(page, (l) => l.spectating)).toBe(true);
+    await expect(page.locator("#spectating")).toBeVisible();
+    await expect(page.locator(".bottom")).toBeHidden();
+    // Spectators see neither player's hand, gold or grid.
+    expect(await lanes(page, (l) => l.visibleGrids)).toEqual([0, 0]);
+  }
+  await expect.poll(() => lanes(dave, (l) => l.unitCount), { timeout: 30_000 }).toBeGreaterThan(0);
+  await dave.screenshot({ path: shots("spectate-2-watching") });
+});
 
 test("two players build, a wave fights and a spell is cast", async ({ browser }) => {
   const alice = await (await browser.newContext()).newPage();

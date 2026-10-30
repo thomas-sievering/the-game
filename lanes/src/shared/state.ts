@@ -21,6 +21,15 @@ export const PlayerState = schema(
 );
 export type PlayerState = SchemaType<typeof PlayerState>;
 
+export const SpectatorState = schema(
+  {
+    id: t.string(),
+    name: t.string(),
+  },
+  "SpectatorState",
+);
+export type SpectatorState = SchemaType<typeof SpectatorState>;
+
 export const UnitState = schema(
   {
     id: t.number(),
@@ -50,6 +59,7 @@ export const LanesState = schema(
     /** Capture progress: positive toward side 0, negative toward side 1. */
     shrineControl: t.number().default(0),
     players: t.array(PlayerState),
+    spectators: t.array(SpectatorState),
     units: t.map(UnitState),
   },
   "LanesState",

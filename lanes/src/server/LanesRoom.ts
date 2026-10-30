@@ -1,11 +1,12 @@
 import { type ArraySchema, StateView } from "@colyseus/schema";
 import { type Client, Room } from "colyseus";
 import { type Battle, type Side, TICK_RATE, createBattle, invest, play, step } from "../shared/sim";
-import { LanesState, type PlayMessage, PlayerState, UnitState } from "../shared/state";
+import { LanesState, type PlayMessage, PlayerState, SpectatorState, UnitState } from "../shared/state";
 
 const CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // no I/O to avoid confusion with 1/0
 const CODES_CHANNEL = "$lanes-codes";
 const MAX_NAME_LENGTH = 16;
+const MAX_SPECTATORS = 8;
 
 export function normalizeName(raw: unknown): string {
   const name = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LENGTH) : "";
@@ -13,7 +14,7 @@ export function normalizeName(raw: unknown): string {
 }
 
 export class LanesRoom extends Room<{ state: LanesState }> {
-  maxClients = 2;
+  maxClients = 2 + MAX_SPECTATORS;
   state = new LanesState();
   battle: Battle | null = null;
 
@@ -22,7 +23,6 @@ export class LanesRoom extends Room<{ state: LanesState }> {
       if (client.sessionId !== this.state.hostId || this.state.phase !== "lobby" || this.state.players.length !== 2) return;
       this.battle = createBattle({ seed: Math.floor(Math.random() * 2147483646) + 1 });
       this.state.phase = "playing";
-      this.lock();
       this.sync(this.battle);
       this.setSimulationInterval(() => this.tick(), 1000 / TICK_RATE);
     },
@@ -33,6 +33,23 @@ export class LanesRoom extends Room<{ state: LanesState }> {
 
     invest: (client: Client) => {
       this.act(client, (battle, side) => invest(battle, side));
+    },
+
+    /** Host action in the lobby: moves someone between the players and the spectators. */
+    spectate: (client: Client, message: { id?: unknown; spectate?: unknown }) => {
+      if (client.sessionId !== this.state.hostId || this.state.phase !== "lobby") return;
+      const target = this.clients.getById(String(message?.id));
+      const player = this.state.players.find((p) => p.id === target?.sessionId);
+      const spectator = this.state.spectators.find((sp) => sp.id === target?.sessionId);
+      if (!target) return;
+      if (message.spectate === true && player) {
+        target.view?.remove(player);
+        this.state.players.splice(this.state.players.indexOf(player), 1);
+        this.state.spectators.push(new SpectatorState({ id: player.id, name: player.name }));
+      } else if (message.spectate === false && spectator && this.state.players.length < 2) {
+        this.state.spectators.splice(this.state.spectators.indexOf(spectator), 1);
+        this.addPlayer(target, spectator.name);
+      }
     },
   };
 
@@ -55,27 +72,35 @@ export class LanesRoom extends Room<{ state: LanesState }> {
   }
 
   onJoin(client: Client, options: { name?: unknown }) {
-    if (this.state.phase !== "lobby") throw new Error("This match has already started");
     const name = normalizeName(options?.name);
-    if (this.state.players.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+    const sameName = (p: { name: string }) => p.name.toLowerCase() === name.toLowerCase();
+    if (this.state.players.some(sameName) || this.state.spectators.some(sameName)) {
       throw new Error("That name is already taken in this room");
     }
+    client.view = new StateView();
+    // Joins as a player while the lobby has a seat; otherwise (full or mid-match) as a spectator.
+    if (this.state.phase === "lobby" && this.state.players.length < 2) this.addPlayer(client, name);
+    else this.state.spectators.push(new SpectatorState({ id: client.sessionId, name }));
+    if (!this.state.hostId) this.state.hostId = client.sessionId;
+  }
+
+  private addPlayer(client: Client, name: string) {
     const side = this.state.players.some((p) => p.side === 0) ? 1 : 0;
     const player = new PlayerState({ id: client.sessionId, name, side });
     this.state.players.push(player);
-    client.view = new StateView();
-    client.view.add(player);
-    if (!this.state.hostId) this.state.hostId = client.sessionId;
+    client.view!.add(player);
   }
 
   onLeave(client: Client) {
     const index = this.state.players.findIndex((p) => p.id === client.sessionId);
-    if (index === -1) return;
-    if (this.state.phase === "lobby") {
-      this.state.players.splice(index, 1);
-      if (this.state.hostId === client.sessionId) this.state.hostId = this.state.players[0]?.id ?? "";
-    } else {
-      this.state.players[index].connected = false;
+    const spectator = this.state.spectators.findIndex((sp) => sp.id === client.sessionId);
+    if (spectator !== -1) this.state.spectators.splice(spectator, 1);
+    else if (index === -1) return;
+    else if (this.state.phase === "lobby") this.state.players.splice(index, 1);
+    else this.state.players[index].connected = false;
+    if (this.state.hostId === client.sessionId) {
+      // Host passes to the next player, or to a spectator if no player is left.
+      this.state.hostId = this.state.players.find((p) => p.connected)?.id ?? this.state.spectators[0]?.id ?? "";
     }
   }
 

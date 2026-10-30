@@ -14,6 +14,7 @@ A browser-based 1v1 deckbuilding auto battler in the spirit of StarCraft II's "D
 - **Accounts:** pick a nickname on first visit; a secret token in localStorage identifies the player. A recovery code moves the account to another browser. No passwords or email.
 - **Unlocks:** earned by playing (finishing/winning matches → currency → new cards). No card levels or stat upgrades.
 - **Storage:** SQLite file on nexus next to the service.
+- **Spectators:** up to 8 per room, on top of the 2 players. Joining a full lobby or a running match makes you a spectator. In the lobby the host can move anyone, themselves included, between players and spectators. The host may be a spectator. Spectators see the battlefield and both bases but not hands, gold or build grids.
 - **Tech:** same stack as minigolf: TypeScript everywhere, authoritative Colyseus server, PixiJS client, Vite, shared deterministic simulation module, Vitest + Playwright.
 - **Repo & deploy:** `lanes/` folder in this repo next to `minigolf/`; GitHub Actions (`lanes-ci.yml`, `lanes-deploy.yml`) → `/etc/nexus/nexus-deploy lanes` → systemd service + Caddy vhost in `D:\projects\nexus\server-config`, like golf.
 
