@@ -1,15 +1,23 @@
 :root {
-  --cream: #f6f1e7;
-  --paper: #fffdf8;
-  --ink: #3b3b48;
-  --muted: #8a8578;
-  --sage: #a8c99a;
-  --sage-dark: #7fa572;
-  --wood: #c9935f;
+  --lawn: #76a35f;
+  --cream: #f6efdc;
+  --paper: #fffcf3;
+  --ink: #2f3b2c;
+  --muted: #7d7a66;
+  --sage: #7cc46f;
+  --sage-dark: #4f8a43;
+  --club: #2f5d3a;
+  --club-dark: #1f4228;
+  --wood: #d09a62;
+  --wood-edge: #6b4426;
   --coral: #e8615a;
-  --coral-dark: #d14c45;
-  --line: #e7dfd0;
-  --shadow: 0 10px 30px rgba(80, 62, 40, 0.12), 0 2px 6px rgba(80, 62, 40, 0.08);
+  --coral-dark: #c4463f;
+  --line: #e3d8bd;
+  --shadow: 0 10px 30px rgba(20, 40, 15, 0.28), 0 2px 6px rgba(20, 40, 15, 0.18);
+  /* Painted plank for the wooden course signs. */
+  --sign: linear-gradient(180deg, #e2ad74 0%, var(--wood) 55%, #c18852 100%);
+  --sign-text: #fffaf0;
+  --sign-text-shadow: 0 1px 0 rgba(80, 45, 20, 0.55);
   font-family: ui-rounded, "SF Pro Rounded", "Nunito", "Segoe UI", system-ui, sans-serif;
   color: var(--ink);
 }
@@ -22,7 +30,7 @@ html,
 body {
   margin: 0;
   height: 100%;
-  background: var(--cream);
+  background: var(--lawn);
   overflow: hidden;
 }
 
@@ -47,10 +55,16 @@ body {
   z-index: 10;
 }
 
+/* Dialogs are scorecards: cream card stock with a club-green border and a thin inner rule. */
 .card {
-  background: var(--paper);
-  border-radius: 22px;
-  box-shadow: var(--shadow);
+  background: linear-gradient(180deg, var(--paper) 0%, #fbf4e2 100%);
+  border: 3px solid var(--club);
+  border-radius: 18px;
+  box-shadow:
+    inset 0 0 0 5px var(--paper),
+    inset 0 0 0 6.5px rgba(47, 93, 58, 0.35),
+    0 6px 0 var(--club-dark),
+    var(--shadow);
   padding: 32px 36px;
   width: min(380px, calc(100vw - 32px));
   display: flex;
@@ -68,23 +82,53 @@ body {
 h1,
 h2 {
   margin: 0;
+  color: var(--club);
 }
 
 .logo {
-  font-size: 44px;
+  font-size: 46px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 12px;
   letter-spacing: -1px;
+  /* Room for the pin flag that pokes out of the ball. */
+  padding-right: 28px;
 }
 
 .logo-ball {
+  position: relative;
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #fff 0 30%, #f2f2ee 31% 100%);
-  box-shadow: inset -3px -3px 0 rgba(0, 0, 0, 0.08), 0 3px 0 var(--sage-dark);
+  background: radial-gradient(circle at 35% 32%, #fff 0 22%, #f4f4ee 23% 60%, #d9d9cf 100%);
+  box-shadow:
+    inset 0 0 0 1.5px rgba(47, 59, 44, 0.35),
+    0 4px 0 -1px var(--sage-dark),
+    0 6px 0 -1px rgba(31, 66, 40, 0.4);
+}
+
+/* A pin flag planted beside the ball. */
+.logo-ball::after {
+  content: "";
+  position: absolute;
+  left: 34px;
+  bottom: -2px;
+  width: 3px;
+  height: 46px;
+  background: #f7f7f2;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(47, 59, 44, 0.35);
+}
+
+.logo-ball::before {
+  content: "";
+  position: absolute;
+  left: 37px;
+  bottom: 27px;
+  border-left: 22px solid var(--coral);
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
 }
 
 .tagline,
@@ -111,21 +155,23 @@ input {
   background: #fff;
   color: var(--ink);
   outline: none;
+  box-shadow: inset 0 2px 0 rgba(47, 59, 44, 0.06);
 }
 
 input:focus {
-  border-color: var(--sage);
+  border-color: var(--sage-dark);
 }
 
 button {
   font: inherit;
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 700;
   padding: 11px 18px;
   border-radius: 12px;
   border: 2px solid var(--line);
   background: #fff;
   color: var(--ink);
+  box-shadow: 0 3px 0 var(--line);
   cursor: pointer;
   transition: transform 0.08s ease, background 0.15s ease;
 }
@@ -135,18 +181,24 @@ button:hover {
 }
 
 button:active {
-  transform: translateY(1px);
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--line);
 }
 
 button.primary {
   background: var(--coral);
-  border-color: var(--coral);
+  border-color: var(--coral-dark);
   color: #fff;
-  box-shadow: 0 3px 0 var(--coral-dark);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.15);
+  box-shadow: 0 4px 0 var(--coral-dark);
 }
 
 button.primary:hover {
   background: #ec6f68;
+}
+
+button.primary:active {
+  box-shadow: 0 2px 0 var(--coral-dark);
 }
 
 button:disabled {
@@ -158,6 +210,7 @@ button:disabled {
 button.link {
   border: none;
   background: none;
+  box-shadow: none;
   color: var(--muted);
   font-weight: 500;
   padding: 4px;
@@ -209,6 +262,7 @@ button.link:hover {
   font-weight: 800;
   letter-spacing: 12px;
   margin-right: -12px;
+  color: var(--club);
 }
 
 .player-list {
@@ -230,14 +284,15 @@ button.link:hover {
 
 .player-list li {
   padding: 8px 12px;
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--cream);
+  border: 1px solid var(--line);
 }
 
 .list-title {
   margin: 6px 0 -2px;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 700;
   color: var(--muted);
   text-align: left;
 }
@@ -260,12 +315,14 @@ button.link:hover {
   color: var(--muted);
 }
 
+/* A little golf ball in the player's colour. */
 .dot {
   width: 14px;
   height: 14px;
   border-radius: 50%;
   flex: none;
-  box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.12), 0 0 0 1.5px rgba(59, 59, 72, 0.25);
+  background-image: radial-gradient(circle at 32% 30%, rgba(255, 255, 255, 0.85) 0 18%, transparent 24%);
+  box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.18), 0 0 0 1.5px rgba(47, 59, 44, 0.35);
 }
 
 .tag {
@@ -291,18 +348,29 @@ button.link:hover {
   align-items: center;
 }
 
+/* HUD plaques are small wooden course signs. */
 .hud-top > div {
-  background: var(--paper);
-  border-radius: 999px;
-  padding: 8px 16px;
-  box-shadow: var(--shadow);
-  font-weight: 650;
+  background: var(--sign);
+  color: var(--sign-text);
+  border: 2px solid var(--wood-edge);
+  border-radius: 10px;
+  padding: 7px 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 3px 0 var(--wood-edge), var(--shadow);
+  font-weight: 750;
+  text-shadow: var(--sign-text-shadow);
   white-space: nowrap;
+}
+
+#hole-info {
+  background: var(--club);
+  border-color: var(--club-dark);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 3px 0 var(--club-dark), var(--shadow);
 }
 
 #turn-info.mine {
   background: var(--coral);
-  color: #fff;
+  border-color: var(--coral-dark);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 3px 0 var(--coral-dark), var(--shadow);
 }
 
 #timer {
@@ -312,7 +380,9 @@ button.link:hover {
 }
 
 #timer.low {
-  color: var(--coral-dark);
+  background: var(--coral-dark);
+  border-color: #8f2f2a;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 3px 0 #8f2f2a, var(--shadow);
 }
 
 .side-players {
@@ -323,8 +393,13 @@ button.link:hover {
   margin: 0;
   padding: 10px 14px;
   background: var(--paper);
-  border-radius: 16px;
-  box-shadow: var(--shadow);
+  border: 2px solid var(--club);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 0 0 3px var(--paper),
+    inset 0 0 0 4px rgba(47, 93, 58, 0.3),
+    0 4px 0 var(--club-dark),
+    var(--shadow);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -332,8 +407,22 @@ button.link:hover {
   font-size: 14px;
 }
 
+.side-players li + li {
+  border-top: 1px dashed var(--line);
+  padding-top: 6px;
+}
+
 .side-players li.turn {
   font-weight: 800;
+}
+
+/* Pennant pointing at whoever is up. */
+.side-players li.turn::before {
+  content: "";
+  margin: 0 -4px 0 -10px;
+  border-left: 6px solid var(--coral);
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
 }
 
 .side-players li.away {
@@ -348,22 +437,32 @@ button.link:hover {
 
 .power {
   position: absolute;
-  bottom: 24px;
+  bottom: 22px;
   left: 50%;
   transform: translateX(-50%);
-  width: 240px;
-  height: 14px;
+  width: 260px;
+  height: 18px;
   border-radius: 999px;
-  background: var(--paper);
-  box-shadow: var(--shadow);
+  background: #3b2a1c;
+  border: 3px solid var(--wood);
+  box-shadow: 0 0 0 2px var(--wood-edge), 0 3px 0 2px var(--wood-edge), var(--shadow);
   overflow: hidden;
+}
+
+/* Tick marks over the fill. */
+.power::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(90deg, transparent 0 24px, rgba(0, 0, 0, 0.25) 24px 26px);
 }
 
 #power-fill {
   height: 100%;
   width: 0;
-  background: linear-gradient(90deg, #a8c99a, #f2b632);
-  border-radius: 999px;
+  /* Fixed-size gradient, so the colour at a given power doesn't stretch with the fill. */
+  background: linear-gradient(90deg, #7cc46f, #f2b632 70%, #f08a3c) 0 0 / 254px 100%;
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.35);
 }
 
 #power-fill.max {
@@ -381,8 +480,10 @@ button.link:hover {
 }
 
 .sound button {
-  padding: 8px 12px;
-  box-shadow: var(--shadow);
+  padding: 7px 12px;
+  background: var(--paper);
+  border-color: var(--wood-edge);
+  box-shadow: 0 3px 0 var(--wood-edge), var(--shadow);
 }
 
 .sound .music {
@@ -390,38 +491,69 @@ button.link:hover {
   align-items: center;
   gap: 8px;
   padding: 7px 14px;
-  border-radius: 12px;
-  background: var(--paper);
-  box-shadow: var(--shadow);
+  border-radius: 10px;
+  background: var(--sign);
+  border: 2px solid var(--wood-edge);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 3px 0 var(--wood-edge), var(--shadow);
   font-size: 14px;
-  font-weight: 650;
-  color: var(--muted);
+  font-weight: 750;
+  color: var(--sign-text);
+  text-shadow: var(--sign-text-shadow);
 }
 
 .sound .music input {
   width: 110px;
   padding: 0;
   border: none;
-  accent-color: var(--sage-dark);
+  box-shadow: none;
+  accent-color: var(--club);
 }
 
+/* The scoreboard is a printed scorecard: green header, par row, ruled cells. */
 table.scores {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-variant-numeric: tabular-nums;
   font-size: 15px;
+  border: 2px solid var(--club);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
 }
 
 table.scores th,
 table.scores td {
   padding: 7px 6px;
-  border-bottom: 2px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+table.scores th:first-child,
+table.scores td:first-child {
+  border-left: none;
+}
+
+table.scores tr:last-child td {
+  border-bottom: none;
 }
 
 table.scores th {
-  color: var(--muted);
-  font-weight: 600;
+  background: var(--club);
+  color: var(--sign-text);
+  font-weight: 700;
   font-size: 13px;
+  border-left-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Par row. */
+table.scores tr:nth-child(2) td {
+  background: #eef5e6;
+  border-bottom: 2px solid var(--club);
+}
+
+table.scores tr:nth-child(2n + 3) td {
+  background: #fbf7ec;
 }
 
 table.scores td.name {
@@ -436,10 +568,12 @@ table.scores td.name span {
 
 table.scores td.total {
   font-weight: 800;
+  background: #f3ecd6;
 }
 
 table.scores .under {
-  color: #4f8a43;
+  color: #3d7a32;
+  font-weight: 800;
 }
 
 table.scores .over {
@@ -464,7 +598,7 @@ table.scores .over {
 
 .podium .block {
   width: 100%;
-  border-radius: 14px 14px 4px 4px;
+  border-radius: 12px 12px 4px 4px;
   background: var(--sage);
   color: #fff;
   font-size: 30px;
@@ -473,7 +607,9 @@ table.scores .over {
   align-items: flex-start;
   justify-content: center;
   padding-top: 8px;
-  box-shadow: inset 0 -6px 0 rgba(0, 0, 0, 0.08);
+  border: 2px solid rgba(0, 0, 0, 0.25);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.2);
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.35), inset 0 -8px 0 rgba(0, 0, 0, 0.1), 0 4px 0 var(--wood-edge);
 }
 
 .podium .p1 .block {
@@ -500,13 +636,15 @@ table.scores .over {
 
 .banner {
   position: fixed;
-  bottom: 60px;
+  bottom: 64px;
   left: 50%;
   transform: translateX(-50%);
-  background: var(--ink);
-  color: #fff;
+  background: var(--club);
+  color: var(--sign-text);
+  border: 2px solid var(--club-dark);
   padding: 10px 18px;
-  border-radius: 999px;
+  border-radius: 12px;
+  box-shadow: 0 3px 0 var(--club-dark), var(--shadow);
   z-index: 20;
-  font-weight: 600;
+  font-weight: 700;
 }
