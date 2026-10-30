@@ -1,12 +1,14 @@
 import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
 import {
+  BEHIND,
   BRANCHES,
   BRANCH_IDS,
   BUILDINGS,
   BUILDING_IDS,
   type BuildingId,
   BUYOUT,
+  CLAIM,
   COLS,
   CROPS,
   CROP_IDS,
@@ -17,20 +19,26 @@ import {
   CROWS,
   DUMP,
   type Fx,
+  GOATS,
   GROWTH_FULL,
   LAND,
   MARKET,
   MATCH_TICKS,
+  OUTPOST,
   ROWS,
+  RUSTLERS,
   SABOTAGE,
   type SabotageId,
+  TAX,
   TECH,
   TECH_IDS,
   TICK_RATE,
   TRADE,
   type TechId,
   WEEDS_TICKS,
+  landTax,
   rateFor,
+  sabotageCost,
   tileAt,
   tileX,
   tileY,
@@ -47,22 +55,33 @@ const renderer = new Renderer();
 /** Resolves once the canvas is ready. Buttons work before that; joining waits for it. */
 let rendererReady: Promise<void> = Promise.resolve();
 
-type Tool = CropId | BuildingId;
-const TOOLS: Tool[] = [...CROP_IDS, ...BUILDING_IDS];
-const BUILDING_ICONS: Record<BuildingId, string> = { well: "🪣", scarecrow: "🧑‍🌾", silo: "🛢️" };
-const SABOTAGE_ICONS: Record<SabotageId, string> = { crows: "🐦‍⬛", weeds: "🌿", dump: "📉" };
+/** Crops and buildings, picked with the number keys, plus the one-off outpost (O). */
+type Tool = CropId | BuildingId | "outpost";
+const TOOLS: (CropId | BuildingId)[] = [...CROP_IDS, ...BUILDING_IDS];
+const BUILDING_ICONS: Record<BuildingId, string> = { well: "🪣", scarecrow: "🧑‍🌾", silo: "🛢️", goats: "🐐" };
+const SABOTAGE_ICONS: Record<SabotageId, string> = { crows: "🐦‍⬛", weeds: "🌿", dump: "📉", rustlers: "🤠" };
+const OUTPOST_ICON = "🚩";
+const CLAIM_ICON = "📜";
+/** The sabotage panel's buttons; a land claim works like a sabotage but is priced per tile. */
+type Move = "crows" | "weeds" | "rustlers" | "claim";
+const MOVES: Move[] = ["crows", "weeds", "rustlers", "claim"];
+const MOVE_KEYS: Record<Move, string> = { crows: "C", weeds: "W", rustlers: "R", claim: "L" };
 const HISTORY_LENGTH = 60;
 /** Longer help shown in a building's tooltip. */
 const BUILDING_HELP: Record<BuildingId, string> = {
   well: "Waters the 8 tiles around it, diagonals included. Crops on dry (cracked) soil grow at half speed, so a well doubles their speed.",
   scarecrow: `Crows can't eat crops within ${CROWS.scarecrowRange} tiles of it (a 5×5 square).`,
   silo: `Your barn holds ${BARN_CAPACITY} more crops. Harvesting stops when the barn is full.`,
+  goats:
+    `Every ${GOATS.everyTicks / TICK_RATE} s its goat eats the nearest enemy crop within ${GOATS.range} tiles, ripe ones first. ` +
+    "Fences keep goats out. Unlike other buildings, a goat pen can be bought out, goat and all.",
 };
 
 let room: Room<any, FarmState> | null = null;
 let tool: Tool = "wheat";
-/** Weeds wait for a target tile after their button is clicked. */
-let aimingWeeds = false;
+/** Weeds and land claims wait for a target tile after their button is clicked. */
+type Aim = "" | "weeds" | "claim";
+let aiming: Aim = "";
 let hovered = -1;
 let toastTimer = 0;
 /** One price sample per second for each crop's sparkline. */
@@ -143,7 +162,8 @@ function render() {
   for (const el of document.querySelectorAll<HTMLElement>(".farmer")) {
     const player = bySide(el.dataset.who === "me" ? mySide : 1 - mySide);
     el.querySelector(".farmer-name")!.textContent = `${player?.name ?? "?"}${player && !player.connected ? " · away" : ""}`;
-    el.querySelector(".farmer-worth")!.textContent = `${player?.netWorth ?? 0} worth`;
+    el.querySelector(".farmer-worth")!.textContent = `${player?.netWorth ?? 0} worth${player?.behind ? " · behind" : ""}`;
+    el.classList.toggle("behind", !!player?.behind);
     const badge = el.querySelector<HTMLButtonElement>(".tech-badge")!;
     badge.dataset.side = String(player?.side ?? -1);
     badge.textContent = `🔬 ${player ? techCount(player) : 0}/${TECH_IDS.length}`;
@@ -162,6 +182,7 @@ function render() {
       `<b>Barn ${stored}/${shown.capacity}</b><div class="tip-row">Harvested crops wait here until you sell them or deliver an order.</div>` +
       `<div class="tip-row">Holds ${BARN_CAPACITY}, plus ${BARN_CAPACITY} per silo. You have ${silos} silo${silos === 1 ? "" : "s"}.</div>` +
       (stored >= shown.capacity ? `<div class="tip-warn">Full: you can't harvest until you sell.</div>` : "");
+    renderTax(s, shown);
     if (self) renderTools(self);
     else renderVersus(s, shown);
     renderMarket(s, shown, !self);
@@ -187,7 +208,7 @@ function render() {
     const note = s.endNote ? `<p class="muted">${escapeHtml(s.endNote)}</p>` : "";
     $("result").innerHTML = `<h1>${escapeHtml(text)}</h1>${note}<table>${rows}</table><button id="home-again" class="primary">Back to start</button>`;
     $("home-again").onclick = () => void room?.leave();
-    aim(false);
+    aim("");
   }
 }
 
@@ -235,20 +256,37 @@ function renderTech(s: FarmState, self: PlayerState | undefined) {
   $("tech-note").textContent = `${mine ? "Each step needs the one above it." : `${player.name} has ${player.coins} coins.`} Research counts at half its cost toward net worth.`;
 }
 
+function renderTax(s: FarmState, shown: PlayerState) {
+  const tiles = [...s.tiles].filter((t) => t.owner === shown.side).length;
+  const tax = landTax(tiles);
+  const next = Math.ceil((TAX.everyTicks - (s.tick % TAX.everyTicks)) / TICK_RATE);
+  const period = TAX.everyTicks / TICK_RATE;
+  $("tax").textContent = tax ? `Land tax ${tax} every ${period} s · next in ${next} s` : `No land tax yet (${tiles} tiles)`;
+  $("tax").classList.toggle("due", tax > 0 && next <= 2);
+  const examples = [10, 20, 30, 40].map((n) => `${n} tiles pay ${landTax(n)}`).join(", ");
+  $("tax").dataset.tip =
+    `<b>Land tax: ${tax} coins every ${period} s</b>` +
+    `<div class="tip-row">Every ${period} s each farmer pays tiles² ÷ ${TAX.divisor} coins. You own ${tiles} tiles. ${examples}.</div>` +
+    `<div class="tip-muted">It keeps a big farm from growing for free; it never takes you below 0 coins.</div>`;
+}
+
 function barnCount(player: PlayerState): number {
   return CROP_IDS.reduce((sum, id) => sum + (player.barn.get(id) ?? 0), 0);
 }
 
-function cost(t: Tool): number {
+function cost(t: CropId | BuildingId): number {
   return t in CROPS ? CROPS[t as CropId].seed : BUILDINGS[t as BuildingId].cost;
 }
+
+/** What a sabotage costs this farmer right now: being behind makes it cheaper. */
+const moveCost = (player: PlayerState, id: SabotageId) => sabotageCost(SABOTAGE[id].cost, player.behind);
 
 /** Both farmers side by side for spectators, the watched one first. */
 function renderVersus(s: FarmState, shown: PlayerState) {
   const pair = [shown, [...s.players].find((p) => p.side !== shown.side)].filter((p): p is PlayerState => !!p);
   const tiles = [...s.tiles];
   const cooldowns = (p: PlayerState) =>
-    (["crows", "weeds", "dump"] as const)
+    (["crows", "weeds", "dump", "rustlers"] as const)
       .map((id) => {
         const wait = Math.max(0, (p.ready.get(id) ?? 0) - s.tick);
         return `<span class="${wait ? "muted" : ""}" title="${SABOTAGE[id].name}">${SABOTAGE_ICONS[id]}${wait ? Math.ceil(wait / TICK_RATE) : "✓"}</span>`;
@@ -256,7 +294,7 @@ function renderVersus(s: FarmState, shown: PlayerState) {
       .join(" ");
   const rows: [string, (p: PlayerState) => string][] = [
     ["Coins", (p) => String(p.coins)],
-    ["Worth", (p) => String(p.netWorth)],
+    ["Worth", (p) => `${p.netWorth}${p.behind ? " · behind" : ""}`],
     ["Land", (p) => String(tiles.filter((t) => t.owner === p.side).length)],
     ["Barn", (p) => `${barnCount(p)}/${p.capacity}`],
     [
@@ -285,6 +323,12 @@ function feedText(fx: Fx): string | null {
       return `${who} bought land for ${fx.cost}`;
     case "buyout":
       return `${who} bought out ${rival}'s land for ${fx.cost}`;
+    case "outpost":
+      return `${who} set up an ${OUTPOST_ICON} outpost`;
+    case "claim":
+      return `${who} claimed ${rival}'s land for ${fx.cost}`;
+    case "rustlers":
+      return `${who}'s rustlers stole ${fx.crops.length} crops from ${rival}`;
     case "contract":
       return `${who} filled an order for ${fx.reward}`;
     case "crows":
@@ -308,10 +352,27 @@ function renderFeed() {
 function renderTools(self: PlayerState) {
   for (const button of $("tools").children as HTMLCollectionOf<HTMLButtonElement>) {
     const t = button.dataset.tool as Tool;
-    button.classList.toggle("selected", t === tool && !aimingWeeds);
+    button.classList.toggle("selected", t === tool && !aiming);
+    if (t === "outpost") {
+      button.classList.toggle("used", self.outpost);
+      button.classList.toggle("poor", !self.outpost && self.coins < outpostCost(self, "grass"));
+      button.querySelector(".cost")!.textContent = self.outpost ? "used" : String(outpostCost(self, "grass"));
+      button.dataset.tip = outpostTip(self);
+      continue;
+    }
     button.classList.toggle("poor", self.coins < cost(t));
     button.dataset.tip = toolTip(t, self);
   }
+}
+
+function outpostTip(self: PlayerState): string {
+  return (
+    `<b>${OUTPOST_ICON} Outpost · ${outpostCost(self, "grass")} coins</b><span class="tip-key">O</span>` +
+    `<div class="tip-row">Buy one neutral tile anywhere on the board, not just next to your land, for ${OUTPOST.percent}% of the land price. ` +
+    "You can then buy the land around it as usual.</div>" +
+    `<div class="tip-muted">Once per match. Grab the middle early, or put a goat pen next to their farm.</div>` +
+    (self.outpost ? `<div class="tip-warn">You've set up your outpost.</div>` : "")
+  );
 }
 
 /** Seconds a crop takes from seed to ripe on a tile like this. */
@@ -324,18 +385,25 @@ function landCost(player: PlayerState, terrain: string): number {
   return LAND.base + player.bought * (has(player, "survey") ? LAND.surveyStep : LAND.step) + (terrain === "rich" ? LAND.rich : 0);
 }
 
+const outpostCost = (player: PlayerState, terrain: string) => Math.floor((landCost(player, terrain) * OUTPOST.percent) / 100);
+
 /** What buying out a tile costs; fences on the owner's land make it dearer. */
 function buyoutCost(t: TileState): number {
   const owner = [...(room?.state.players ?? [])].find((p) => p.side === t.owner);
   return t.value * (has(owner, "fences") ? BUYOUT.fencedFactor : BUYOUT.factor);
 }
 
+const claimCost = (t: TileState) => Math.floor((buyoutCost(t) * CLAIM.percent) / 100);
+
+/** Land that can change hands: not starting land, and no building but a goat pen. */
+const takeable = (t: TileState) => !t.home && !t.guarded && (!t.building || t.building === "goats");
+
 /** How far a well owned by this side waters: irrigation adds a ring. */
 function wellReach(side: number): number {
   return has([...(room?.state.players ?? [])].find((p) => p.side === side), "irrigation") ? 2 : 1;
 }
 
-function toolTip(t: Tool, self: PlayerState): string {
+function toolTip(t: CropId | BuildingId, self: PlayerState): string {
   const key = `<span class="tip-key">${TOOLS.indexOf(t) + 1}</span>`;
   const poor = self.coins < cost(t) ? `<div class="tip-warn">You need ${cost(t)} coins.</div>` : "";
   if (t in CROPS) {
@@ -406,9 +474,11 @@ function renderMarket(s: FarmState, self: PlayerState, readOnly: boolean) {
         `<div class="tip-muted">The price drops with each unit sold, then recovers.</div>`
       : `You have no ${CROPS[crop].name.toLowerCase()} to sell.`;
     const dump = row.querySelector<HTMLButtonElement>("button.dump")!;
-    dump.disabled = readOnly || stock < DUMP.units || dumpReady > 0 || self.coins < SABOTAGE.dump.cost;
+    const dumpCost = moveCost(self, "dump");
+    dump.disabled = readOnly || stock < DUMP.units || dumpReady > 0 || self.coins < dumpCost;
     dump.dataset.tip =
-      `<b>${SABOTAGE_ICONS.dump} Market dump · ${SABOTAGE.dump.cost} coins</b>` +
+      `<b>${SABOTAGE_ICONS.dump} Market dump · ${dumpCost} coins</b>` +
+      (self.behind ? `<div class="tip-row">You're behind, so it costs ${BEHIND.discount}% less (normally ${SABOTAGE.dump.cost}).</div>` : "") +
       `<div class="tip-row">Throw away ${DUMP.units} ${CROPS[crop].name.toLowerCase()} to crash its price to ${MARKET.floor / 10}% ` +
       `and freeze it there for ${DUMP.freezeTicks / TICK_RATE} s.</div>` +
       `<div class="tip-muted">Cooldown ${SABOTAGE.dump.cooldownTicks / TICK_RATE} s.</div>` +
@@ -474,21 +544,55 @@ function renderContracts(s: FarmState, self: PlayerState, readOnly: boolean) {
 }
 
 function renderSabotage(s: FarmState, self: PlayerState, readOnly: boolean) {
+  const rival = [...s.players].find((p) => p.side !== self.side);
+  const mine = !readOnly;
+  const note = $("behind-note");
+  const behindText = `sabotage costs ${BEHIND.discount}% less, and ${SABOTAGE_ICONS.rustlers} Rustlers and ${CLAIM_ICON} Land claim are unlocked.`;
+  if (self.behind) note.textContent = `${mine ? "You're" : `${self.name} is`} behind: ${behindText}`;
+  else if (rival?.behind) note.textContent = `${rival.name} is behind: their ${behindText}`;
+  note.classList.toggle("hidden", !self.behind && !rival?.behind);
+  note.classList.toggle("mine", self.behind);
+  note.dataset.tip =
+    `<b>Falling behind</b><div class="tip-row">A farmer whose net worth is below ${BEHIND.percent}% of the other's, ` +
+    `and at least ${BEHIND.minGap} short, is behind. ` +
+    `Their sabotage costs ${BEHIND.discount}% less and they get two comeback moves.</div>` +
+    `<div class="tip-muted">It switches off again once they catch up.</div>`;
+
   for (const button of $("sabotage").children as HTMLCollectionOf<HTMLButtonElement>) {
-    const id = button.dataset.id as SabotageId;
+    const id = button.dataset.id as Move;
     const wait = Math.max(0, (self.ready.get(id) ?? 0) - s.tick);
-    button.disabled = readOnly || wait > 0 || self.coins < SABOTAGE[id].cost;
-    button.classList.toggle("armed", id === "weeds" && aimingWeeds);
-    button.querySelector(".state")!.textContent = wait > 0 ? `${Math.ceil(wait / TICK_RATE)} s` : `${SABOTAGE[id].cost}`;
-    const how =
-      id === "crows"
-        ? `Eat the crops on ${CROWS.count} random enemy tiles, ripe ones first. Crops within ${CROWS.scarecrowRange} tiles of their scarecrow are safe.`
-        : `Click, then pick a 2×2 patch of enemy land. Those crops grow at half speed for ${WEEDS_TICKS / TICK_RATE} s unless they pull the weeds tile by tile.`;
+    const locked = (id === "claim" || SABOTAGE[id].behindOnly) && !self.behind;
+    const price = id === "claim" ? 0 : moveCost(self, id);
+    button.disabled = readOnly || wait > 0 || locked || self.coins < price;
+    button.classList.toggle("armed", aiming === id);
+    button.classList.toggle("locked", locked);
+    const state = button.querySelector(".state")!;
+    if (wait > 0) state.textContent = `${Math.ceil(wait / TICK_RATE)} s`;
+    else if (locked) state.textContent = "🔒 behind";
+    else if (id === "claim") state.textContent = `−${100 - CLAIM.percent}%`;
+    else state.innerHTML = price < SABOTAGE[id].cost ? `<s>${SABOTAGE[id].cost}</s> ${price}` : String(price);
+    const how = {
+      crows: `Eat the crops on ${CROWS.count} random enemy tiles, ripe ones first. Crops within ${CROWS.scarecrowRange} tiles of their scarecrow are safe.`,
+      weeds: `Click, then pick a 2×2 patch of enemy land. Those crops grow at half speed for ${WEEDS_TICKS / TICK_RATE} s unless they pull the weeds tile by tile.`,
+      rustlers: `Steal up to ${RUSTLERS.count} of their most valuable stored crops into your barn.`,
+      claim:
+        `Click, then pick any of their tiles, anywhere on the board, to buy it out for ${CLAIM.percent}% of the buyout price. ` +
+        "They get what they paid back. Not starting land, nor buildings other than goat pens.",
+    }[id];
+    const name = id === "claim" ? "Land claim" : SABOTAGE[id].name;
+    const icon = id === "claim" ? CLAIM_ICON : SABOTAGE_ICONS[id];
+    const cooldown = id === "claim" ? CLAIM.cooldownTicks : SABOTAGE[id].cooldownTicks;
+    const title = id === "claim" ? "priced per tile" : `${price} coins`;
     button.dataset.tip =
-      `<b>${SABOTAGE_ICONS[id]} ${SABOTAGE[id].name} · ${SABOTAGE[id].cost} coins</b><span class="tip-key">${id[0].toUpperCase()}</span>` +
-      `<div class="tip-row">${how}</div><div class="tip-muted">Cooldown ${SABOTAGE[id].cooldownTicks / TICK_RATE} s.</div>` +
+      `<b>${icon} ${name} · ${title}</b><span class="tip-key">${MOVE_KEYS[id]}</span>` +
+      `<div class="tip-row">${how}</div>` +
+      (id !== "claim" && price < SABOTAGE[id].cost
+        ? `<div class="tip-row">You're behind, so it costs ${BEHIND.discount}% less (normally ${SABOTAGE[id].cost}).</div>`
+        : "") +
+      `<div class="tip-muted">Cooldown ${cooldown / TICK_RATE} s.</div>` +
+      (locked ? `<div class="tip-warn">🔒 Only while you're behind: below ${BEHIND.percent}% of their net worth and ${BEHIND.minGap} short.</div>` : "") +
       (wait > 0 ? `<div class="tip-warn">Ready in ${Math.ceil(wait / TICK_RATE)} s.</div>` : "") +
-      (self.coins < SABOTAGE[id].cost ? `<div class="tip-warn">You need ${SABOTAGE[id].cost} coins.</div>` : "");
+      (!locked && self.coins < price ? `<div class="tip-warn">You need ${price} coins.</div>` : "");
   }
 }
 
@@ -509,7 +613,7 @@ function bordersMine(index: number, side: number): boolean {
 }
 
 interface Action {
-  type: "buy" | "clear" | "plant" | "harvest" | "build" | "weed" | "weeds";
+  type: "buy" | "clear" | "plant" | "harvest" | "build" | "weed" | "weeds" | "claim" | "outpost";
   text: string;
 }
 
@@ -519,21 +623,29 @@ function actionFor(index: number): Action | null {
   const t = tile(index);
   if (!self || !t || room?.state.phase !== "playing") return null;
   const s = room.state;
-  if (aimingWeeds) return { type: "weeds", text: `Sow weeds here (${SABOTAGE.weeds.cost} coins)` };
+  if (aiming === "weeds") return { type: "weeds", text: `Sow weeds here (${moveCost(self, "weeds")} coins)` };
+  if (aiming === "claim") {
+    if (t.owner !== 1 - self.side || !takeable(t)) return null;
+    return { type: "claim", text: `Claim this tile for ${claimCost(t)} coins (they get ${t.value} back)` };
+  }
   if (t.owner === self.side) {
     if (t.weeds) return { type: "weed", text: "Pull the weeds" };
     if (t.crop && t.growth >= 100) return { type: "harvest", text: `Harvest ${CROPS[t.crop as CropId].name.toLowerCase()}` };
     if (t.terrain === "rock") return { type: "clear", text: `Clear the rock (${LAND.clear} coins)` };
-    if (t.crop || t.building) return null;
+    if (t.crop || t.building || tool === "outpost") return null;
     if (tool in CROPS) return { type: "plant", text: `Plant ${CROPS[tool as CropId].name.toLowerCase()} (${cost(tool)} coins)` };
     return { type: "build", text: `Build a ${BUILDINGS[tool as BuildingId].name.toLowerCase()} (${cost(tool)} coins)` };
   }
-  if (t.terrain === "pond" || !bordersMine(index, self.side)) return null;
+  if (t.terrain === "pond") return null;
+  if (!bordersMine(index, self.side)) {
+    if (tool !== "outpost" || t.owner !== -1 || self.outpost) return null;
+    return { type: "outpost", text: `Set up your outpost here for ${outpostCost(self, t.terrain)} coins` };
+  }
   if (t.owner === -1) {
     const price = landCost(self, t.terrain);
     return { type: "buy", text: `Buy this ${t.terrain === "rich" ? "rich soil" : t.terrain} for ${price} coins` };
   }
-  if (t.home || t.building || t.guarded) return null;
+  if (!takeable(t)) return null;
   const wait = Math.max(0, (self.ready.get("buyout") ?? 0) - s.tick);
   const note = wait ? ` · ready in ${Math.ceil(wait / TICK_RATE)} s` : "";
   return { type: "buy", text: `Buy out for ${buyoutCost(t)} coins (they get ${t.value} back)${note}` };
@@ -613,12 +725,14 @@ function tileTip(index: number): string {
   }
   if (t.owner !== -1) {
     if (t.home) row(`Starting land, worth ${t.value}. Can't be bought out.`, "tip-muted");
+    else if (t.building === "goats") row(`Worth ${t.value}. Buyout price ${buyoutCost(t)}, and the goat pen comes with it.`, "tip-muted");
     else if (t.building) row(`Worth ${t.value}. Land with a building can't be bought out.`, "tip-muted");
     else if (t.guarded) row(`Worth ${t.value}. Just bought out, safe for now.`, "tip-muted");
     else row(`Worth ${t.value}. Buyout price ${buyoutCost(t)}.`, "tip-muted");
   } else if (t.terrain !== "pond" && self) {
     const price = landCost(self, t.terrain);
     row(`Costs ${price} coins. You can buy land that touches yours (not diagonally).`, "tip-muted");
+    if (!self.outpost) row(`Or set up your one ${OUTPOST_ICON} outpost on it (O) for ${outpostCost(self, t.terrain)} coins.`, "tip-muted");
   }
   const action = actionFor(index);
   const click = action ? `<div class="tip-action">Click: ${action.text}</div>` : "";
@@ -629,7 +743,7 @@ function tileTip(index: number): string {
 function previewFor(index: number): { tiles: number[]; color: number } | null {
   const t = tile(index);
   if (index === -1 || !t) return null;
-  if (aimingWeeds) {
+  if (aiming === "weeds") {
     const x = Math.min(tileX(index), COLS - 2);
     const y = Math.min(tileY(index), ROWS - 2);
     const patch = [tileAt(x, y), tileAt(x + 1, y), tileAt(x, y + 1), tileAt(x + 1, y + 1)];
@@ -641,13 +755,15 @@ function previewFor(index: number): { tiles: number[]; color: number } | null {
     return { tiles: around(index, reach).filter((n) => n !== index && tile(n)?.terrain !== "pond"), color: PALETTE.pond };
   }
   if (building === "scarecrow") return { tiles: around(index, CROWS.scarecrowRange), color: PALETTE.wheat };
+  if (building === "goats") return { tiles: around(index, GOATS.range).filter((n) => n !== index), color: PALETTE.carrot };
   return null;
 }
 
 function updateHint() {
   renderer.preview = previewFor(hovered);
-  if (aimingWeeds) {
-    $("hint").textContent = "Click enemy land to sow a 2×2 patch of weeds · Esc to cancel";
+  if (aiming) {
+    $("hint").textContent =
+      aiming === "weeds" ? "Click enemy land to sow a 2×2 patch of weeds · Esc to cancel" : "Click any of their tiles to claim it · Esc to cancel";
     return;
   }
   const action = hovered === -1 ? null : actionFor(hovered);
@@ -675,7 +791,13 @@ function clickTile(index: number) {
   if (!action || !room) return;
   if (action.type === "weeds") {
     room.send("sabotage", { id: "weeds", target: index });
-    aim(false);
+    aim("");
+  } else if (action.type === "claim") {
+    room.send("claim", { tile: index });
+    aim("");
+  } else if (action.type === "outpost") {
+    room.send("outpost", { tile: index });
+    selectTool("wheat");
   } else if (action.type === "plant") {
     room.send("plant", { tile: index, crop: tool });
   } else if (action.type === "build") {
@@ -685,14 +807,17 @@ function clickTile(index: number) {
   }
 }
 
-function aim(on: boolean) {
-  aimingWeeds = on;
+function aim(mode: Aim) {
+  aiming = mode;
   if (room?.state) render();
 }
 
+/** Arms a targeted move, or disarms it when it's already armed. */
+const toggleAim = (mode: Aim) => aim(aiming === mode ? "" : mode);
+
 function selectTool(t: Tool) {
   tool = t;
-  aim(false);
+  aim("");
 }
 
 function onFx(events: Fx[]) {
@@ -707,6 +832,16 @@ function onFx(events: Fx[]) {
     else if (fx.type === "sell" && mine) sfx.sell(fx.count);
     else if (fx.type === "buy" && mine) sfx.buy();
     else if (fx.type === "buyout") sfx.buyout();
+    else if (fx.type === "outpost") {
+      sfx.buy();
+      if (!mine && !spectating) toast(`${nameOf(fx.side)} set up an outpost`);
+    } else if (fx.type === "claim") {
+      sfx.buyout();
+      if (!mine && !spectating) toast(`${nameOf(fx.side)} claimed your land`);
+    } else if (fx.type === "rustlers") {
+      sfx.rustlers();
+      if (!spectating) toast(mine ? `Your rustlers stole ${fx.crops.length} crops` : `Rustlers stole ${fx.crops.length} crops from your barn`);
+    } else if (fx.type === "goat") sfx.goat();
     else if (fx.type === "contract") {
       sfx.contract();
       if (!mine && !spectating) toast(`${[...room!.state.players].find((p) => p.side === fx.side)?.name ?? "They"} filled an order`);
@@ -723,6 +858,8 @@ function onFx(events: Fx[]) {
     renderFeed();
   }
 }
+
+const nameOf = (side: number) => [...(room?.state.players ?? [])].find((p) => p.side === side)?.name ?? "They";
 
 function toast(message: string) {
   $("toast").textContent = message;
@@ -765,7 +902,7 @@ async function enter(join: () => Promise<Room<any, FarmState>>) {
   });
   room.onLeave(() => {
     room = null;
-    aim(false);
+    aim("");
     render();
   });
   render();
@@ -783,6 +920,12 @@ function buildPanel() {
     button.onclick = () => selectTool(t);
     $("tools").appendChild(button);
   });
+  const post = document.createElement("button");
+  post.className = "tool";
+  post.dataset.tool = "outpost";
+  post.innerHTML = `<span class="key">O</span><span class="icon">${OUTPOST_ICON}</span><span>Outpost</span><span class="cost"></span>`;
+  post.onclick = () => selectTool("outpost");
+  $("tools").appendChild(post);
 
   $("market").innerHTML = CROP_IDS.map(
     (id) =>
@@ -797,11 +940,12 @@ function buildPanel() {
     row.querySelector<HTMLButtonElement>(".dump")!.onclick = () => room?.send("sabotage", { id: "dump", target: crop });
   }
 
-  for (const id of ["crows", "weeds"] as const) {
+  for (const id of MOVES) {
     const button = document.createElement("button");
     button.dataset.id = id;
-    button.innerHTML = `<span>${SABOTAGE_ICONS[id]} ${SABOTAGE[id].name} <span class="muted">(${id[0].toUpperCase()})</span></span><span class="state"></span>`;
-    button.onclick = () => (id === "crows" ? room?.send("sabotage", { id }) : aim(!aimingWeeds));
+    const label = id === "claim" ? `${CLAIM_ICON} Land claim` : `${SABOTAGE_ICONS[id]} ${SABOTAGE[id].name}`;
+    button.innerHTML = `<span>${label} <span class="muted">(${MOVE_KEYS[id]})</span></span><span class="state"></span>`;
+    button.onclick = () => (id === "weeds" || id === "claim" ? toggleAim(id) : room?.send("sabotage", { id }));
     $("sabotage").appendChild(button);
   }
   $("sabotage").classList.add("sabotage");
@@ -875,9 +1019,12 @@ function main() {
     if (room.state.phase !== "playing") return;
     const n = Number(e.key);
     if (n >= 1 && n <= TOOLS.length) selectTool(TOOLS[n - 1]);
-    else if (e.key === "Escape") aim(false);
+    else if (e.key === "Escape") aim("");
     else if (e.key.toLowerCase() === "c") room.send("sabotage", { id: "crows" });
-    else if (e.key.toLowerCase() === "w") aim(!aimingWeeds);
+    else if (e.key.toLowerCase() === "r") room.send("sabotage", { id: "rustlers" });
+    else if (e.key.toLowerCase() === "w") toggleAim("weeds");
+    else if (e.key.toLowerCase() === "l") toggleAim("claim");
+    else if (e.key.toLowerCase() === "o") selectTool("outpost");
     else if (e.key.toLowerCase() === "m") {
       toggleMute();
       muteLabel();
@@ -936,6 +1083,12 @@ main();
   },
   get tech() {
     return TECH_IDS.filter((id) => has(me(), id));
+  },
+  get behind() {
+    return !!me()?.behind;
+  },
+  get outpost() {
+    return !!me()?.outpost;
   },
   get winner() {
     return room?.state.winner ?? -1;

@@ -11,15 +11,18 @@ import {
   TICK_RATE,
   buy,
   capacity,
+  claim,
   clearRock,
   createFarm,
   fill,
   forfeit,
   growthPercent,
   harvest,
+  isBehind,
   isRipe,
   isWet,
   netWorth,
+  outpost,
   plant,
   build,
   price,
@@ -59,6 +62,8 @@ export class FarmRoom extends Room<{ state: FarmState }> {
     },
 
     buy: (client: Client, m: TileMessage) => this.act(client, (farm, side) => buy(farm, side, Number(m?.tile))),
+    outpost: (client: Client, m: TileMessage) => this.act(client, (farm, side) => outpost(farm, side, Number(m?.tile))),
+    claim: (client: Client, m: TileMessage) => this.act(client, (farm, side) => claim(farm, side, Number(m?.tile))),
     clear: (client: Client, m: TileMessage) => this.act(client, (farm, side) => clearRock(farm, side, Number(m?.tile))),
     plant: (client: Client, m: TileMessage) => this.act(client, (farm, side) => plant(farm, side, Number(m?.tile), m?.crop as CropId)),
     harvest: (client: Client, m: TileMessage) => this.act(client, (farm, side) => harvest(farm, side, Number(m?.tile))),
@@ -216,6 +221,8 @@ export class FarmRoom extends Room<{ state: FarmState }> {
       view.netWorth = netWorth(farm, side);
       view.bought = player.bought;
       view.capacity = capacity(farm, side);
+      view.behind = isBehind(farm, side);
+      view.outpost = player.outpost;
       syncMap(view.barn, player.barn);
       syncMap(view.ready, player.ready);
       syncMap(view.tech, player.tech);
