@@ -10,7 +10,9 @@ type Farm = {
   tiles: { owner: number; terrain: string; crop: string; growth: number; weeds: boolean }[];
   winner: number;
   spectating: boolean;
+  watching: string | null;
   tileOnScreen: (tile: number) => { x: number; y: number };
+  send: (type: string, message: unknown) => void;
 };
 
 const shots = (name: string) => `${process.env.SCREENSHOT_DIR ?? "artifacts/e2e"}/${name}.png`;
@@ -153,5 +155,21 @@ test("the host moves themselves to spectators and starts a match they watch", as
   expect(await farm(alice, (f) => f.spectating)).toBe(true);
   expect(await farm(carol, (f) => f.spectating)).toBe(false);
   await expect(alice.locator("#spectating")).toBeVisible();
+  // Spectators see the watched farmer's panel read-only, and click the other name to switch.
+  await expect(alice.locator("#panel")).toBeVisible();
+  await expect(alice.locator("#tools")).toBeHidden();
+  await expect(alice.locator("#concede")).toBeHidden();
+  await expect(alice.locator("#contracts .contract").first()).toBeVisible();
+  await expect(alice.locator("#panel button:enabled:visible")).toHaveCount(0);
+  await expect(alice.locator("#versus tr")).toHaveCount(7);
+  // A farmer's move shows up in the spectator's feed.
+  const land = (await farm(carol, (f) => f.side)) === 0 ? tileAt(2, 0) : mirror(tileAt(2, 0));
+  await farm(carol, (f, tile) => f.send("buy", { tile }), land);
+  await expect(alice.locator("#feed li", { hasText: "Carol bought land" })).toBeVisible();
+  const first = await farm(alice, (f) => f.watching);
   await alice.screenshot({ path: shots("spectate-2-watching") });
+  await alice.locator('.farmer[data-who="them"]').click();
+  await expect.poll(() => farm(alice, (f) => f.watching)).not.toBe(first);
+  await expect(alice.locator("#spectating")).toHaveText(`Watching ${await farm(alice, (f) => f.watching)}`);
+  await alice.screenshot({ path: shots("spectate-3-switched") });
 });
