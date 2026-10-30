@@ -43,7 +43,8 @@ A browser-based 1v1 deckbuilding auto battler in the spirit of StarCraft II's "D
 ## Assumptions (please confirm or correct)
 
 - **Board:** horizontal battlefield, your base on the left, the enemy's mirrored on the right. Each player has a 3-row × 4-column build grid behind their base. A unit's row is the row it spawns and walks in, and front columns spawn slightly ahead. Units can cross rows to reach targets.
-- **Win:** destroy the enemy base (1500 HP). A unit that reaches the enemy base breaches it once for damage equal to its card cost and is spent, so each wave is its own push instead of a growing death ball. Bases have a short-range turret. If neither base falls by 10:00, the base with more HP left wins; equal HP is a draw.
+- **Win:** destroy the enemy base (1200 HP). A unit that reaches the enemy base breaches it once for damage equal to its card cost and is spent, so each wave is its own push instead of a growing death ball. Bases have a short-range turret. If neither base falls by 10:00, the base with more HP left wins; equal HP is a draw.
+- **Towers:** two destructible towers stand in front of each base, in the top and bottom lanes. They shoot nearby enemies, and enemy units that come near stop to knock them down; a fallen tower pays the other side a bounty and stays down for the match.
 - **Shrine:** a neutral capture point sits in the middle of the centre lane. Units standing in it with no enemy units there capture it in 3 s (a held shrine first turns neutral). The owner earns +2 gold per second.
 - **Waves:** every 20 s. Each placed unit spawns once per wave, and placements are permanent for the match (Desert Strike rules).
 - **Economy:** gold trickles in each second, plus a bounty per kill. Placing a unit costs gold, and so does a spell. Spells also have a cooldown. A player can invest gold for +1 income per second, and each investment costs more.

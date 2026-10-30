@@ -10,7 +10,7 @@ export const ROWS = 3;
 export const COLS = 4;
 export const ROW_HEIGHT = 140;
 export const FIELD_HEIGHT = ROWS * ROW_HEIGHT;
-export const BASE_HP = 1500;
+export const BASE_HP = 1200;
 export const WAVE_TICKS = 20 * TICK_RATE;
 export const MATCH_TICKS = 10 * 60 * TICK_RATE;
 export const HAND_SIZE = 4;
@@ -32,7 +32,12 @@ export const RESEARCH: Record<2 | 3, { cost: number; ticks: number }> = {
 };
 export const MAX_TIER = 3;
 /** Each base shoots the nearest enemy in reach. */
-export const TURRET = { damage: 25, range: 160, attackTicks: 20 };
+export const TURRET = { damage: 40, range: 160, attackTicks: 20 };
+/**
+ * Two towers stand in front of each base, in the top and bottom lanes, `x` from the base. They shoot the nearest
+ * enemy in range, and enemies that come near stop to knock them down. A fallen tower pays `bounty` to the other side.
+ */
+export const TOWER = { hp: 400, damage: 15, range: 150, attackTicks: 20, x: 130, rows: [0, 2], bounty: 40 };
 /** Neutral shrine in the middle of the centre lane. Units standing in it alone capture it; the owner earns extra gold per second. */
 export const SHRINE = { x: FIELD_WIDTH / 2, y: FIELD_HEIGHT / 2, radius: 70, captureTicks: 60, income: 2 };
 
@@ -60,6 +65,18 @@ export interface Unit {
   noBounty?: boolean;
 }
 
+export interface Tower {
+  x: number;
+  y: number;
+  hp: number;
+  cooldown: number;
+  /** False once it has fallen; it stays in the list so towers keep their index. */
+  standing: boolean;
+}
+
+/** Anything a unit can attack. */
+type Target = Unit | Tower;
+
 export interface Player {
   gold: number;
   /** Gold gained per second. */
@@ -83,6 +100,7 @@ export interface Player {
   /** Times each limited-use spell has been cast. */
   used: Record<string, number>;
   turretCooldown: number;
+  towers: Tower[];
 }
 
 export type Fx =
@@ -91,6 +109,8 @@ export type Fx =
   | { type: "heal"; x: number; y: number; tx: number; ty: number }
   | { type: "death"; id: number; side: Side; x: number; y: number }
   | { type: "breach"; side: Side; x: number; y: number; damage: number }
+  /** A tower of `side` fell. */
+  | { type: "tower"; side: Side; index: number; x: number; y: number }
   | { type: "spell"; side: Side; card: string; points: [number, number][] }
   /** The shrine changed hands; `owner` is -1 when it turned neutral. */
   | { type: "shrine"; owner: Side | -1 };
@@ -125,7 +145,7 @@ export function createBattle({ seed = 1, decks = [STARTER_DECK, STARTER_DECK] }:
     nextId: 1,
     seed: seed % 2147483647 || 1,
     units: [],
-    players: [createPlayer(), createPlayer()],
+    players: [createPlayer(0), createPlayer(1)],
     shrine: { owner: -1, control: 0 },
     winner: -1,
     events: [],
@@ -138,7 +158,7 @@ export function createBattle({ seed = 1, decks = [STARTER_DECK, STARTER_DECK] }:
   return battle;
 }
 
-function createPlayer(): Player {
+function createPlayer(side: Side): Player {
   return {
     gold: START_GOLD,
     income: START_INCOME,
@@ -154,6 +174,13 @@ function createPlayer(): Player {
     ready: {},
     used: {},
     turretCooldown: 0,
+    towers: TOWER.rows.map((row) => ({
+      x: side === 0 ? TOWER.x : FIELD_WIDTH - TOWER.x,
+      y: rowCenter(row),
+      hp: TOWER.hp,
+      cooldown: 0,
+      standing: true,
+    })),
   };
 }
 
@@ -417,7 +444,10 @@ export function step(battle: Battle): void {
   }
   if (battle.tick % WAVE_TICKS === 0) spawnWave(battle);
 
-  for (const side of [0, 1] as const) fireTurret(battle, side);
+  for (const side of [0, 1] as const) {
+    fireTurret(battle, side);
+    fireTowers(battle, side);
+  }
   for (const unit of battle.units) if (unit.hp > 0) act(battle, unit);
   separate(battle);
   contestShrine(battle);
@@ -433,6 +463,15 @@ export function step(battle: Battle): void {
     battle.events.push({ type: "death", id: unit.id, side: unit.side, x: unit.x, y: unit.y });
   }
   battle.units = alive;
+  for (const side of [0, 1] as const) {
+    battle.players[side].towers.forEach((tower, index) => {
+      if (!tower.standing || tower.hp > 0) return;
+      tower.standing = false;
+      tower.hp = 0;
+      battle.players[side === 0 ? 1 : 0].gold += TOWER.bounty;
+      battle.events.push({ type: "tower", side, index, x: tower.x, y: tower.y });
+    });
+  }
 
   const [hp0, hp1] = [battle.players[0].baseHp, battle.players[1].baseHp];
   if (hp0 <= 0 || hp1 <= 0 || battle.tick >= MATCH_TICKS) {
@@ -511,6 +550,32 @@ function fireTurret(battle: Battle, side: Side): void {
   battle.events.push({ type: "hit", id: 0, side, x: baseX, y: target.y, tx: target.x, ty: target.y, ranged: true, splash: 0 });
 }
 
+function fireTowers(battle: Battle, side: Side): void {
+  for (const tower of battle.players[side].towers) {
+    if (!tower.standing) continue;
+    if (tower.cooldown > 0) {
+      tower.cooldown--;
+      continue;
+    }
+    let target: Unit | null = null;
+    let bestDist = TOWER.range * TOWER.range;
+    for (const unit of battle.units) {
+      if (unit.side === side || unit.hp <= 0) continue;
+      const dx = unit.x - tower.x;
+      const dy = unit.y - tower.y;
+      const dist = dx * dx + dy * dy;
+      if (dist <= bestDist && (!target || dist < bestDist)) {
+        target = unit;
+        bestDist = dist;
+      }
+    }
+    if (!target) continue;
+    target.hp -= TOWER.damage;
+    tower.cooldown = TOWER.attackTicks;
+    battle.events.push({ type: "hit", id: 0, side, x: tower.x, y: tower.y, tx: target.x, ty: target.y, ranged: true, splash: 0 });
+  }
+}
+
 function act(battle: Battle, unit: Unit): void {
   if (unit.frozenTicks > 0) {
     unit.frozenTicks--;
@@ -555,8 +620,7 @@ function act(battle: Battle, unit: Unit): void {
     } else if (unit.cooldown === 0) {
       unit.cooldown = card.attackTicks;
       const splash = card.splash ?? 0;
-      for (const other of splash ? battle.units : [target]) {
-        if (other.side === unit.side || other.hp <= 0) continue;
+      for (const other of splash ? enemyTargets(battle, unit.side) : [target]) {
         const sx = other.x - target.x;
         const sy = other.y - target.y;
         if (other === target || sx * sx + sy * sy <= splash * splash) other.hp -= damage;
@@ -580,12 +644,18 @@ function act(battle: Battle, unit: Unit): void {
   battle.events.push({ type: "breach", side: unit.side, x: baseX, y: unit.y, damage: card.cost });
 }
 
-/** Closest living enemy within range, ties going to the older unit. */
-function nearestEnemy(battle: Battle, unit: Unit, range: number): Unit | null {
-  let best: Unit | null = null;
+/** Living enemy units, then the enemy's standing towers. */
+function enemyTargets(battle: Battle, side: Side): Target[] {
+  const targets: Target[] = battle.units.filter((u) => u.side !== side && u.hp > 0);
+  for (const tower of battle.players[side === 0 ? 1 : 0].towers) if (tower.standing && tower.hp > 0) targets.push(tower);
+  return targets;
+}
+
+/** Closest living enemy unit or tower within range, ties going to the older unit, then to towers. */
+function nearestEnemy(battle: Battle, unit: Unit, range: number): Target | null {
+  let best: Target | null = null;
   let bestDist = range * range;
-  for (const other of battle.units) {
-    if (other.side === unit.side || other.hp <= 0) continue;
+  for (const other of enemyTargets(battle, unit.side)) {
     const dx = other.x - unit.x;
     const dy = other.y - unit.y;
     const dist = dx * dx + dy * dy;

@@ -162,6 +162,7 @@ export class LanesRoom extends Room<{ state: LanesState }> {
       view.investCost = player.investCost;
       view.tier = player.tier;
       view.researchDone = player.researchDone;
+      syncArray(view.towers, player.towers.map((tower) => Math.max(0, tower.hp)));
       syncArray(view.hand, player.hand);
       syncArray(view.grid, player.grid);
       syncArray(view.levels, player.levels);

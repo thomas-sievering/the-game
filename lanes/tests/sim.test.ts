@@ -15,6 +15,7 @@ import {
   SHRINE,
   START_INCOME,
   TICK_RATE,
+  TOWER,
   TURRET,
   WAVE_TICKS,
   createBattle,
@@ -30,6 +31,13 @@ import {
 
 const run = (battle: Battle, ticks: number) => {
   for (let i = 0; i < ticks; i++) step(battle);
+};
+
+/** Battle without the towers in front of the bases, for tests about units reaching or nearing a base. */
+const noTowers = (options?: Parameters<typeof createBattle>[0]) => {
+  const battle = createBattle(options);
+  for (const player of battle.players) player.towers = [];
+  return battle;
 };
 
 /** Puts a card into hand slot 0 of a side so tests don't depend on the shuffle or tiers. */
@@ -269,7 +277,7 @@ describe("placement and waves", () => {
 
 describe("combat", () => {
   it("a unit that reaches the enemy base breaches it for its cost and is spent", () => {
-    const battle = createBattle();
+    const battle = noTowers();
     spawnUnit(battle, 0, "brute", 0);
     const gold = battle.players[1].gold;
     run(battle, 60 * TICK_RATE);
@@ -279,7 +287,7 @@ describe("combat", () => {
   });
 
   it("bases shoot enemies that come close", () => {
-    const battle = createBattle();
+    const battle = noTowers();
     const runner = spawnUnit(battle, 1, "runner", 0);
     runner.x = TURRET.range - 1;
     runner.frozenTicks = 1000;
@@ -349,6 +357,52 @@ describe("combat", () => {
   });
 });
 
+describe("towers", () => {
+  it("each base has two towers in the outer lanes", () => {
+    const battle = createBattle();
+    expect(battle.players[0].towers.map((t) => [t.x, t.y, t.hp])).toEqual(TOWER.rows.map((row) => [TOWER.x, rowCenter(row), TOWER.hp]));
+    expect(battle.players[1].towers.map((t) => t.x)).toEqual([FIELD_WIDTH - TOWER.x, FIELD_WIDTH - TOWER.x]);
+  });
+
+  it("towers shoot enemies in range", () => {
+    const battle = createBattle();
+    const tower = battle.players[0].towers[0];
+    const runner = spawnUnit(battle, 1, "runner", 0);
+    runner.x = tower.x + TOWER.range - 1;
+    runner.frozenTicks = 1000;
+    step(battle);
+    expect(runner.hp).toBe(runner.maxHp - TOWER.damage);
+  });
+
+  it("units stop to knock a tower down, which pays a bounty, then walk on to the base", () => {
+    const battle = createBattle();
+    const golem = spawnUnit(battle, 0, "golem", 0, 0, 0, 1, 3);
+    const tower = battle.players[1].towers[0];
+    const gold = battle.players[0].gold;
+    let fell = -1;
+    for (let i = 0; i < 120 * TICK_RATE && battle.players[1].baseHp === BASE_HP; i++) {
+      step(battle);
+      if (fell === -1 && battle.events.some((e) => e.type === "tower" && e.side === 1 && e.index === 0)) fell = battle.tick;
+      battle.events = [];
+    }
+    expect(fell).toBeGreaterThan(0);
+    expect(tower.standing).toBe(false);
+    expect(tower.hp).toBe(0);
+    expect(battle.players[0].gold - gold).toBeGreaterThanOrEqual(TOWER.bounty);
+    // With its tower gone the golem reached the base.
+    expect(battle.players[1].baseHp).toBe(BASE_HP - CARDS.golem.cost);
+  });
+
+  it("splash hits towers too", () => {
+    const battle = createBattle();
+    const tower = battle.players[1].towers[0];
+    const bomber = spawnUnit(battle, 0, "bomber", 0);
+    bomber.x = tower.x - 100;
+    run(battle, 1);
+    expect(tower.hp).toBe(TOWER.hp - unitCard("bomber").damage);
+  });
+});
+
 describe("spells", () => {
   it("lightning hits the three frontmost enemies", () => {
     const battle = createBattle();
@@ -384,7 +438,7 @@ describe("spells", () => {
   });
 
   it("a levelled unit breaches for its card cost and pays a bigger bounty", () => {
-    const battle = createBattle();
+    const battle = noTowers();
     spawnUnit(battle, 0, "brute", 0, 0, 0, 1, 2).x = FIELD_WIDTH - 1;
     run(battle, 5);
     expect(battle.players[1].baseHp).toBe(BASE_HP - unitCard("brute").cost);
@@ -568,7 +622,7 @@ describe("shrine", () => {
 
 describe("match end", () => {
   it("destroying the base wins", () => {
-    const battle = createBattle();
+    const battle = noTowers();
     battle.players[1].baseHp = 1;
     spawnUnit(battle, 0, "brute", 0).x = FIELD_WIDTH - 1;
     run(battle, 5);
