@@ -7,6 +7,8 @@ export const PlayerState = schema(
     side: t.uint8(),
     connected: t.boolean().default(true),
     baseHp: t.number().default(0),
+    /** HP per tower in front of the base, 0 once it has fallen. */
+    towers: t.array("number"),
     // Fields tagged .view() reach their own player and the spectators; the opponent can't see your hand, grid or gold.
     gold: t.number().default(0).view(),
     income: t.number().default(0).view(),

@@ -190,6 +190,7 @@ function render() {
   // Spectators see both build grids, side 0 on the left.
   renderer.setBoards(board(self ?? bySide(0)), self ? null : board(bySide(1)));
   renderer.setShrine(s.shrineOwner, s.shrineControl);
+  renderer.setTowers([[...(bySide(0)?.towers ?? [])], [...(bySide(1)?.towers ?? [])]]);
   renderer.setUnits([...s.units.values()]);
   playStateSounds(s, self);
 
@@ -286,6 +287,7 @@ function playFx(events: Fx[]) {
     } else if (fx.type === "heal") sfx.heal();
     else if (fx.type === "death") sfx.death(fx.side === renderer.mySide);
     else if (fx.type === "breach") sfx.breach(fx.side !== renderer.mySide);
+    else if (fx.type === "tower") sfx.breach(fx.side === renderer.mySide);
     else if (fx.type === "spell") sfx.spell(fx.card);
     else if (fx.type === "shrine" && fx.owner !== -1) sfx.shrine(fx.owner === renderer.mySide);
   }

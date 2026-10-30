@@ -1,6 +1,6 @@
 import { Application, Container, Graphics, Rectangle, Text } from "pixi.js";
 import { CARDS } from "../shared/cards";
-import { COLS, FIELD_HEIGHT, FIELD_WIDTH, type Fx, MAX_LEVEL, ROW_HEIGHT, ROWS, SHRINE } from "../shared/sim";
+import { COLS, FIELD_HEIGHT, FIELD_WIDTH, type Fx, MAX_LEVEL, ROW_HEIGHT, ROWS, SHRINE, TOWER, rowCenter } from "../shared/sim";
 import { TABLE, drawMini, drawSpellIcon, miniHeight, miniRadius, mix, shade } from "./minis";
 
 export const PALETTE = {
@@ -123,7 +123,7 @@ const HUD_TOP = 80;
 const HUD_BOTTOM = 236;
 /** Higher is snappier; positions arrive 20 times a second. */
 const SMOOTHING = 18;
-const FX_SECONDS = { hit: 0.3, heal: 0.45, death: 0.6, breach: 0.9, spell: 0.7, shrine: 0.9 };
+const FX_SECONDS = { hit: 0.3, heal: 0.45, death: 0.6, breach: 0.9, tower: 0.9, spell: 0.7, shrine: 0.9 };
 const FLASH_SECONDS = 0.12;
 const LUNGE_SECONDS = 0.16;
 const SPAWN_SECONDS = 0.25;
@@ -188,6 +188,9 @@ export class Renderer {
   /** Seconds left of the flash on a pad that just levelled up, per board cell. */
   private padFlash = new Array<number>(2 * ROWS * COLS).fill(0);
   private shrine = { owner: -1, control: 0 };
+  /** HP per tower, by side; 0 once fallen. */
+  private towers: [number[], number[]] = [[], []];
+  private towerFlash: [number[], number[]] = [[], []];
   private hoverCell = -1;
   private shake = 0;
   private baseFlash = [0, 0];
@@ -277,6 +280,26 @@ export class Renderer {
     this.shrine = { owner, control };
   }
 
+  /** Tower HP by side; a drop shows a damage number and a flash. */
+  setTowers(towers: [number[], number[]]): void {
+    for (const side of [0, 1]) {
+      towers[side].forEach((hp, i) => {
+        const before = this.towers[side][i];
+        if (before !== undefined && hp < before) {
+          this.towerFlash[side][i] = FLASH_SECONDS;
+          const { x, y } = this.towerAt(side, i);
+          this.float(`-${before - hp}`, x, y - 64, 0xffffff, 15);
+        }
+      });
+      this.towers[side] = towers[side];
+    }
+  }
+
+  /** Where a side's tower stands, as drawn. */
+  private towerAt(side: number, index: number): { x: number; y: number } {
+    return { x: this.vx(side === 0 ? TOWER.x : FIELD_WIDTH - TOWER.x), y: rowCenter(TOWER.rows[index]) };
+  }
+
   addFx(events: Fx[]): void {
     for (const fx of events) {
       const by = fx.type === "hit" ? (fx.id === 0 ? "turret" : (this.shown.get(fx.id)?.card ?? "")) : "";
@@ -306,6 +329,9 @@ export class Renderer {
         this.baseFlash[victim] = 0.3;
         if (victim === this.mySide) this.shake = Math.min(14, this.shake + 6 + fx.damage / 10);
         this.float(`-${fx.damage}`, this.vx(fx.x), fx.y - 20, 0xff8a7a, 30);
+      } else if (fx.type === "tower") {
+        if (fx.side === this.mySide) this.shake = Math.min(14, this.shake + 8);
+        this.float("Tower down", this.vx(fx.x), fx.y - 70, this.color(fx.side), 20);
       } else if (fx.type === "shrine" && fx.owner !== -1) {
         const text = fx.owner === this.mySide ? `Shrine +${SHRINE.income}/s` : "Shrine lost";
         this.float(text, this.vx(SHRINE.x), SHRINE.y - SHRINE.radius - 16, this.color(fx.owner), 22);
@@ -605,6 +631,15 @@ export class Renderer {
           const py = fx.y + Math.sin(a) * d + 60 * t * t;
           g.rect(px - 3, py - 1.5, 7, 3).fill({ color: i % 2 ? TABLE.wood : TABLE.stone, alpha });
         }
+      } else if (fx.type === "tower") {
+        // The tower crumbles: a dust cloud and tumbling blocks.
+        const x = this.vx(fx.x);
+        g.circle(x, fx.y - 10, 20 + 50 * t).fill({ color: PALETTE.dust, alpha: 0.5 * alpha });
+        for (let i = 0; i < 12; i++) {
+          const a = (i / 12) * Math.PI * 2;
+          const d = 8 + 55 * t;
+          g.rect(x + Math.cos(a) * d - 3, fx.y - 20 + Math.sin(a) * d * 0.6 + 50 * t * t, 7, 5).fill({ color: i % 3 ? TABLE.stone : this.color(fx.side), alpha });
+        }
       } else if (fx.type === "death") {
         for (let i = 0; i < 6; i++) {
           const a = (i * Math.PI) / 3 + 0.4;
@@ -790,11 +825,46 @@ export class Renderer {
     this.drawShrine(g);
     this.drawFort(g, -BASE_WIDTH, this.mySide);
     this.drawFort(g, FIELD_WIDTH, 1 - this.mySide);
+    for (const side of [0, 1]) {
+      for (let i = 0; i < TOWER.rows.length; i++) {
+        const { x, y } = this.towerAt(side, i);
+        if ((this.towers[side][i] ?? TOWER.hp) > 0) this.drawTower(g, x, y, side);
+        else this.drawRubble(g, x, y, side);
+      }
+    }
+  }
+
+  /** A round stone tower with battlements and a band in its side's colour. */
+  private drawTower(g: Graphics, x: number, y: number, side: number): void {
+    const color = this.color(side);
+    const ink = { color: TABLE.ink, width: 2 };
+    g.ellipse(x + 4, y + 4, 28, 12).fill({ color: 0x000000, alpha: 0.3 });
+    g.ellipse(x, y, 22, 9).fill(TABLE.stoneDark).stroke(ink);
+    g.rect(x - 20, y - 42, 40, 42).fill(TABLE.stone);
+    g.moveTo(x - 20, y).lineTo(x - 20, y - 42).moveTo(x + 20, y).lineTo(x + 20, y - 42).stroke(ink);
+    for (const row of [-12, -28]) g.moveTo(x - 20, y + row).lineTo(x + 20, y + row).stroke({ color: TABLE.stoneDark, width: 1, alpha: 0.6 });
+    g.rect(x - 20, y - 24, 40, 7).fill(color).stroke({ color: TABLE.ink, width: 1.5 });
+    g.rect(x - 2.5, y - 38, 5, 11).fill(TABLE.ink);
+    g.rect(x - 14, y - 40, 6, 36).fill({ color: 0xffffff, alpha: 0.12 });
+    for (let i = 0; i < 4; i++) g.rect(x - 22 + i * 12, y - 52, 8, 11).fill(TABLE.stone).stroke({ color: TABLE.ink, width: 1.5 });
+    g.rect(x - 22, y - 44, 44, 4).fill(TABLE.stone).stroke({ color: TABLE.ink, width: 1.5 });
+  }
+
+  /** What is left of a fallen tower. */
+  private drawRubble(g: Graphics, x: number, y: number, side: number): void {
+    g.ellipse(x + 3, y + 3, 28, 11).fill({ color: 0x000000, alpha: 0.25 });
+    g.ellipse(x, y, 22, 9).fill(TABLE.stoneDark).stroke({ color: TABLE.ink, width: 2 });
+    g.poly([x - 20, y, x - 20, y - 14, x - 10, y - 8, x - 2, y - 18, x + 8, y - 6, x + 20, y - 12, x + 20, y]).fill(TABLE.stone).stroke({ color: TABLE.ink, width: 1.5 });
+    g.rect(x - 20, y - 5, 40, 4).fill({ color: this.color(side), alpha: 0.7 });
+    for (const [dx, dy, w] of [[-28, 6, 9], [24, 4, 8], [10, 10, 7], [-12, 9, 6]]) {
+      g.roundRect(x + dx - w / 2, y + dy - 3, w, 6, 2).fill(TABLE.stone).stroke({ color: TABLE.ink, width: 1 });
+    }
   }
 
   /** The parts of the board that move: banners, the shrine's crystal and capture ring, and fort flashes. */
   private drawField(dt = 0): void {
-    const sceneryKey = `${this.mySide}|${this.shrine.owner}`;
+    const standing = this.towers.map((side) => side.map((hp) => (hp > 0 ? 1 : 0)).join("")).join("/");
+    const sceneryKey = `${this.mySide}|${this.shrine.owner}|${standing}`;
     if (sceneryKey !== this.sceneryKey) {
       this.sceneryKey = sceneryKey;
       this.drawScenery();
@@ -811,6 +881,22 @@ export class Renderer {
         g.roundRect(x + 4, -12, BASE_WIDTH - 8, FIELD_HEIGHT + 24, 8).fill({ color: PALETTE.white, alpha: this.baseFlash[side] * 2 });
         this.baseFlash[side] = Math.max(0, this.baseFlash[side] - dt);
       }
+    }
+    // Hurt towers show their health; a hit flashes them.
+    for (const side of [0, 1]) {
+      this.towers[side].forEach((hp, i) => {
+        if (hp <= 0) return;
+        const { x, y } = this.towerAt(side, i);
+        const flash = this.towerFlash[side][i] ?? 0;
+        if (flash > 0) {
+          g.rect(x - 22, y - 52, 44, 52).fill({ color: PALETTE.white, alpha: (0.5 * flash) / FLASH_SECONDS });
+          this.towerFlash[side][i] = Math.max(0, flash - dt);
+        }
+        if (hp >= TOWER.hp) return;
+        const [w, top] = [44, y - 62];
+        g.roundRect(x - w / 2 - 2, top - 1, w + 4, 8, 3).fill(PALETTE.hpBack);
+        g.roundRect(x - w / 2, top + 1, (w * hp) / TOWER.hp, 4, 2).fill(side === this.mySide ? PALETTE.hp : PALETTE.hpThem);
+      });
     }
   }
 
