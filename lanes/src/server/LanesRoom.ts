@@ -1,7 +1,7 @@
 import { type ArraySchema, StateView } from "@colyseus/schema";
 import { type Client, Room } from "colyseus";
 import { STARTER_DECK, deckError } from "../shared/cards";
-import { type Battle, type Side, TICK_RATE, createBattle, invest, play, research, sell, step } from "../shared/sim";
+import { type Battle, type Side, TICK_RATE, createBattle, discard, invest, play, research, sell, step } from "../shared/sim";
 import { LanesState, type PlayMessage, PlayerState, SpectatorState, UnitState } from "../shared/state";
 
 const CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // no I/O to avoid confusion with 1/0
@@ -33,6 +33,10 @@ export class LanesRoom extends Room<{ state: LanesState }> {
 
     play: (client: Client, message: PlayMessage) => {
       this.act(client, (battle, side) => play(battle, side, Number(message?.hand), message?.cell === undefined ? undefined : Number(message.cell)));
+    },
+
+    discard: (client: Client, message: { hand?: unknown }) => {
+      this.act(client, (battle, side) => discard(battle, side, Number(message?.hand)));
     },
 
     /** Picks the deck to play with; only before the match starts. */

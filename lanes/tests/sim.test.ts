@@ -4,6 +4,7 @@ import {
   type Battle,
   BASE_HP,
   COLS,
+  DISCARD_COST,
   DRAW,
   FIELD_WIDTH,
   HAND_SIZE,
@@ -19,6 +20,7 @@ import {
   TURRET,
   WAVE_TICKS,
   createBattle,
+  discard,
   invest,
   play,
   research,
@@ -75,6 +77,33 @@ describe("hand and deck", () => {
       expect(player.hand.every(Boolean)).toBe(true);
       expect(player.hand.length + player.deck.length + player.discard.length).toBe(STARTER_DECK.length);
     }
+  });
+
+  it("discarding costs gold and puts the card at the bottom of the draw pile", () => {
+    const battle = createBattle();
+    const player = battle.players[0];
+    player.hand[0] = "golem";
+    const next = player.deck[player.deck.length - 1];
+    expect(discard(battle, 0, 0)).toBeNull();
+    expect(player.gold).toBe(START_GOLD - DISCARD_COST);
+    expect(player.hand[0]).toBe(next);
+    expect(player.deck[0]).toBe("golem");
+    player.gold = DISCARD_COST - 1;
+    expect(discard(battle, 0, 1)).toBe("Not enough gold");
+    expect(discard(battle, 0, 9)).toBe("No card in that slot");
+  });
+
+  it("a discard from an empty draw pile reshuffles first so the card doesn't come straight back", () => {
+    const battle = createBattle();
+    const player = battle.players[0];
+    player.gold = 100_000;
+    player.discard.push(...player.deck);
+    player.deck = [];
+    const card = player.hand[0];
+    expect(discard(battle, 0, 0)).toBeNull();
+    expect(player.hand[0]).not.toBe(card);
+    expect(player.deck[0]).toBe(card);
+    expect(player.hand.length + player.deck.length + player.discard.length).toBe(STARTER_DECK.length);
   });
 
   it("deals from a custom deck with duplicate copies", () => {
