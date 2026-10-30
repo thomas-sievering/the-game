@@ -97,7 +97,8 @@ test("the host spectates and a latecomer watches mid-match", async ({ browser })
   await dave.screenshot({ path: shots("spectate-2-watching") });
 });
 
-test("two players build, a wave fights and a spell is cast", async ({ browser }) => {
+// Tagged @prod: the deploy runs only this test against production; PR CI runs them all.
+test("two players build, a wave fights and a spell is cast", { tag: "@prod" }, async ({ browser }) => {
   const alice = await (await newContext(browser)).newPage();
   const bob = await (await newContext(browser)).newPage();
 
