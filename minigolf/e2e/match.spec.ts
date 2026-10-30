@@ -5,8 +5,12 @@ import bunkers from "../src/shared/holes/3-bunkers.json" with { type: "json" };
 import waterCrossing from "../src/shared/holes/4-water-crossing.json" with { type: "json" };
 import theHill from "../src/shared/holes/5-the-hill.json" with { type: "json" };
 import gauntlet from "../src/shared/holes/6-gauntlet.json" with { type: "json" };
+import zigZag from "../src/shared/holes/7-zig-zag.json" with { type: "json" };
+import island from "../src/shared/holes/8-island.json" with { type: "json" };
+import crosswind from "../src/shared/holes/9-crosswind.json" with { type: "json" };
+import grandFinale from "../src/shared/holes/10-grand-finale.json" with { type: "json" };
 
-const HOLES = [warmUp, dogleg, bunkers, waterCrossing, theHill, gauntlet];
+const HOLES = [warmUp, dogleg, bunkers, waterCrossing, theHill, gauntlet, zigZag, island, crosswind, grandFinale];
 
 type Golf = {
   phase: string | null;
@@ -134,7 +138,7 @@ test("the host spectates and a latecomer watches mid-match", async ({ browser })
   for (const page of [alice, bob, carol]) await page.context().close();
 });
 
-test("a solo player plays all six holes to the podium", async ({ page }) => {
+test("a solo player plays all ten holes to the podium", async ({ page }) => {
   // Balls roll in real time; six holes take about 90 s locally and longer on CI runners.
   test.setTimeout(360_000);
   await page.goto("/");
@@ -144,7 +148,7 @@ test("a solo player plays all six holes to the podium", async ({ page }) => {
 
   let shotIndex = 0;
   let hole = -1;
-  const deadline = Date.now() + 170_000;
+  const deadline = Date.now() + 300_000;
   for (;;) {
     expect(Date.now()).toBeLessThan(deadline);
     const phase = await golf(page, (g) => g.phase);

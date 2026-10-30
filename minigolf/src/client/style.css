@@ -370,13 +370,39 @@ button.link:hover {
   background: var(--coral);
 }
 
-.mute {
-  position: absolute;
+.sound {
+  position: fixed;
   right: 14px;
   bottom: 14px;
-  pointer-events: auto;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sound button {
   padding: 8px 12px;
   box-shadow: var(--shadow);
+}
+
+.sound .music {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.sound .music input {
+  width: 110px;
+  padding: 0;
+  border: none;
+  accent-color: var(--sage-dark);
 }
 
 table.scores {

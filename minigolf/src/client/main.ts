@@ -5,7 +5,7 @@ import { HOLES } from "../shared/holes";
 import { MAX_AIM_DISTANCE, type ShotResult, TICK_RATE, simulateShot } from "../shared/physics";
 import { MAX_PLAYERS } from "../shared/rules";
 import { GolfState, type Phase, type PlayerState, type ShotMessage } from "../shared/state";
-import { isMuted, sfx, toggleMute } from "./audio";
+import { getMusicVolume, isMuted, setMusicVolume, sfx, startMusic, toggleMute } from "./audio";
 import { type BallView, Renderer } from "./render";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -449,6 +449,11 @@ async function main() {
   };
   $("mute").textContent = isMuted() ? "🔇" : "🔊";
   $("mute").onclick = () => ($("mute").textContent = toggleMute() ? "🔇" : "🔊");
+  const musicVolume = $<HTMLInputElement>("music-volume");
+  musicVolume.value = String(Math.round(getMusicVolume() * 100));
+  musicVolume.oninput = () => setMusicVolume(Number(musicVolume.value) / 100);
+  // Browsers only allow audio after a user gesture.
+  for (const type of ["pointerdown", "keydown"]) addEventListener(type, startMusic, { once: true, capture: true });
 
   await rendererReady;
   renderer.canvas.addEventListener("pointermove", (e) => (mouse = renderer.screenToWorld(e.clientX, e.clientY)));
