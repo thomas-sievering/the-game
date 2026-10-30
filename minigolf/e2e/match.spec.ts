@@ -86,6 +86,8 @@ test("two players create, join and finish hole 1", async ({ browser }) => {
     expect(stats.checks).toBeGreaterThan(0);
     expect(stats.desyncs).toBe(0);
   }
+  // Idle pages keep animating and slow down later tests on CI.
+  for (const page of [alice, bob]) await page.context().close();
 });
 
 test("the host spectates and a latecomer watches mid-match", async ({ browser }) => {
@@ -119,15 +121,17 @@ test("the host spectates and a latecomer watches mid-match", async ({ browser })
   await carol.goto(`/?room=${code}`);
   await carol.fill("#name", "Carol");
   await carol.click("#join");
-  await expect(carol.locator("#hud")).toBeVisible();
+  // Joining waits for the renderer, which a busy CI runner starts slowly.
+  await expect(carol.locator("#hud")).toBeVisible({ timeout: 20_000 });
   expect(await golf(carol, (g) => g.spectating)).toBe(true);
 
   await bob.evaluate(([dx, dy]) => (window as any).__golf.shoot(dx, dy), warmUp.solution[0]);
-  for (const page of [alice, carol]) await expect.poll(() => golf(page, (g) => g.stats.shots)).toBe(1);
+  for (const page of [alice, carol]) await expect.poll(() => golf(page, (g) => g.stats.shots), { timeout: 20_000 }).toBe(1);
   await carol.waitForTimeout(400);
   await carol.screenshot({ path: shots("spectate-2-watching") });
-  for (const page of [alice, carol]) await expect.poll(() => golf(page, (g) => g.busy)).toBe(false);
+  for (const page of [alice, carol]) await expect.poll(() => golf(page, (g) => g.busy), { timeout: 20_000 }).toBe(false);
   for (const page of [alice, carol]) expect((await golf(page, (g) => g.stats)).desyncs).toBe(0);
+  for (const page of [alice, bob, carol]) await page.context().close();
 });
 
 test("a solo player plays all six holes to the podium", async ({ page }) => {
