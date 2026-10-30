@@ -41,7 +41,15 @@ export type SpellEffect =
   /** Multiplies the damage and healing of your units. */
   | { type: "fury"; multiplier: number; ticks: number }
   /** Spawns a unit in every lane right away. */
-  | { type: "summon"; card: string };
+  | { type: "summon"; card: string }
+  /** Restores your base's health, up to its maximum. */
+  | { type: "repair"; amount: number }
+  /** Hits the enemy with the most health left. */
+  | { type: "smite"; damage: number }
+  /** Hurts every enemy unit. */
+  | { type: "quake"; damage: number }
+  /** Kills every unit on the field, yours included, paying no bounty. */
+  | { type: "wipe" };
 
 export interface SpellCard {
   kind: "spell";
@@ -50,6 +58,8 @@ export interface SpellCard {
   tier: Tier;
   cost: number;
   cooldownTicks: number;
+  /** Casts allowed per player per match; unlimited when unset. */
+  uses?: number;
   effect: SpellEffect;
   text: string;
 }
@@ -73,6 +83,8 @@ export const CARDS: Record<string, Card> = Object.fromEntries(
     unit({ id: "sniper", name: "Sniper", tier: 2, role: "ranged", cost: 55, bounty: 11, hp: 50, damage: 40, range: 260, speed: 30, attackTicks: 60, text: "Huge range, slow shots." }),
     unit({ id: "golem", name: "Golem", tier: 3, role: "tank", cost: 90, bounty: 18, hp: 900, damage: 30, range: 28, speed: 18, attackTicks: 40, text: "A walking wall." }),
     unit({ id: "catapult", name: "Catapult", tier: 3, role: "splash", cost: 80, bounty: 16, hp: 150, damage: 40, range: 220, speed: 20, attackTicks: 70, splash: 70, text: "Long-range area damage." }),
+    unit({ id: "berserker", name: "Berserker", tier: 1, role: "melee", cost: 45, bounty: 9, hp: 160, damage: 9, range: 22, speed: 46, attackTicks: 9, text: "Frenzied axe, very fast swings." }),
+    unit({ id: "wolfrider", name: "Wolf Rider", tier: 2, role: "fast", cost: 45, bounty: 9, hp: 130, damage: 14, range: 24, speed: 80, attackTicks: 16, text: "Fast cavalry that bites back." }),
     spell({ id: "rally", name: "Rally", tier: 1, cost: 40, cooldownTicks: 400, effect: { type: "haste", multiplier: 1.5, ticks: 100 }, text: "All your units +50% speed for 5 s." }),
     spell({ id: "lightning", name: "Lightning", tier: 1, cost: 50, cooldownTicks: 300, effect: { type: "lightning", targets: 3, damage: 60 }, text: "Hits the 3 frontmost enemies for 60." }),
     spell({ id: "mend", name: "Mend", tier: 1, cost: 40, cooldownTicks: 400, effect: { type: "heal", amount: 100 }, text: "Heals all your units by 100." }),
@@ -80,6 +92,10 @@ export const CARDS: Record<string, Card> = Object.fromEntries(
     spell({ id: "fury", name: "Fury", tier: 2, cost: 55, cooldownTicks: 500, effect: { type: "fury", multiplier: 2, ticks: 80 }, text: "Your units deal double damage for 4 s." }),
     spell({ id: "muster", name: "Muster", tier: 2, cost: 50, cooldownTicks: 500, effect: { type: "summon", card: "footman" }, text: "A Footman joins every lane right now." }),
     spell({ id: "frost", name: "Frost", tier: 3, cost: 60, cooldownTicks: 600, effect: { type: "freeze", ticks: 60 }, text: "Freezes all enemy units for 3 s." }),
+    spell({ id: "repair", name: "Repair", tier: 2, cost: 70, cooldownTicks: 600, effect: { type: "repair", amount: 150 }, text: "Repairs your fort by 150." }),
+    spell({ id: "smite", name: "Smite", tier: 1, cost: 50, cooldownTicks: 400, effect: { type: "smite", damage: 200 }, text: "Strikes the toughest enemy for 200." }),
+    spell({ id: "quake", name: "Quake", tier: 2, cost: 60, cooldownTicks: 500, effect: { type: "quake", damage: 30 }, text: "Every enemy unit takes 30." }),
+    spell({ id: "cataclysm", name: "Cataclysm", tier: 3, cost: 100, cooldownTicks: 1200, uses: 3, effect: { type: "wipe" }, text: "Destroys every unit on the field, yours too. No bounty." }),
   ].map((card) => [card.id, card]),
 );
 

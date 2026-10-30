@@ -687,6 +687,24 @@ export class Renderer {
       } else if (fx.card === "muster") {
         g.rect(x - 2, y - 40 * (1 - t) - 30, 4, 30).fill({ color: TABLE.woodLight, alpha });
         g.circle(x, y, 14 + 30 * t).stroke({ color: this.color(fx.side), width: 4 * alpha + 1, alpha });
+      } else if (fx.card === "repair") {
+        // A green ring over the fort and stone chips flying back into its walls.
+        const inward = x < FIELD_WIDTH / 2 ? 1 : -1;
+        g.circle(x, y, 40 + 60 * t).stroke({ color: PALETTE.heal, width: 6 * alpha + 1, alpha });
+        for (let i = 0; i < 8; i++) {
+          const px = x + inward * (20 + i * 9);
+          g.rect(px - 4, y + 60 - 140 * t - (i % 3) * 18 + (i - 3.5) * 10, 8, 6).fill({ color: i % 2 ? TABLE.stone : TABLE.stoneDark, alpha });
+        }
+      } else if (fx.card === "smite") {
+        g.moveTo(x, -80).lineTo(x, y).stroke({ color: PALETTE.lightning, width: 14 * alpha + 2, alpha: alpha * 0.8 });
+        g.circle(x, y, 16 + 40 * t).fill({ color: PALETTE.white, alpha: 0.5 * alpha });
+      } else if (fx.card === "quake") {
+        const shake = Math.sin(t * 60) * 6 * alpha;
+        g.moveTo(x - 18 + shake, y + 6).lineTo(x - 6, y - 2).lineTo(x + 4 - shake, y + 8).lineTo(x + 18, y).stroke({ color: TABLE.ink, width: 3, alpha });
+        g.ellipse(x, y + 4, 20 + 24 * t, (20 + 24 * t) * 0.45).fill({ color: PALETTE.dust, alpha: 0.5 * alpha });
+      } else if (fx.card === "cataclysm") {
+        g.circle(x, y, 8 + 50 * t).fill({ color: PALETTE.fury, alpha: 0.45 * alpha });
+        g.circle(x, y, 8 + 34 * t).fill({ color: 0xffe0a0, alpha: 0.6 * alpha });
       } else if (fx.card === "mend") {
         const s = 10 + 8 * t;
         g.rect(x - s, y - 3 - 20 * t, s * 2, 6).fill({ color: PALETTE.heal, alpha });

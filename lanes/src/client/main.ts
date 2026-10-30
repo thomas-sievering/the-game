@@ -231,19 +231,23 @@ function renderHand(self: PlayerState, tick: number) {
     const card = CARDS[self.hand[i] ?? ""];
     const cooldown = card?.kind === "spell" ? Math.max(0, (self.ready.get(card.id) ?? 0) - tick) : 0;
     const locked = !!card && card.tier > self.tier;
-    const key = `${card?.id}|${Math.ceil(cooldown / TICK_RATE)}|${locked}`;
+    const left = card?.kind === "spell" && card.uses !== undefined ? card.uses - (self.used.get(card.id) ?? 0) : undefined;
+    const key = `${card?.id}|${Math.ceil(cooldown / TICK_RATE)}|${locked}|${left}`;
     if (button.dataset.key !== key) {
       button.dataset.key = key;
       button.className = `hand-card ${card?.kind ?? "empty"}`;
-      button.innerHTML = card ? cardHtml(card, i, cooldown, locked) : "";
+      button.innerHTML = card ? cardHtml(card, i, cooldown, locked, left) : "";
     }
     button.classList.toggle("poor", !card || locked || self.gold < card.cost || cooldown > 0);
     button.classList.toggle("selected", i === selected);
   }
 }
 
-/** `slot` is the hand slot whose shortcut key to show, or null outside the hand; `locked` covers a card above your tier. */
-function cardHtml(card: Card, slot: number | null, cooldown: number, locked: boolean): string {
+/**
+ * `slot` is the hand slot whose shortcut key to show, or null outside the hand; `locked` covers a card above your tier;
+ * `left` is the casts left of a limited spell.
+ */
+function cardHtml(card: Card, slot: number | null, cooldown: number, locked: boolean, left?: number): string {
   const top =
     `<span class="cost">${card.cost}</span><span class="tier t${card.tier}" title="Tier ${card.tier}">${ROMAN[card.tier]}</span>` +
     (slot === null ? "" : `<span class="key">${slot + 1}</span>`) +
@@ -252,7 +256,7 @@ function cardHtml(card: Card, slot: number | null, cooldown: number, locked: boo
   if (card.kind === "spell") {
     return (
       `${top}<strong>${card.name}</strong>` +
-      `<span class="text">${card.text}</span><span class="stats">Spell · ${card.cooldownTicks / TICK_RATE} s cooldown</span>` +
+      `<span class="text">${card.text}</span><span class="stats">Spell · ${card.cooldownTicks / TICK_RATE} s cooldown${uses(card, left)}</span>` +
       (cooldown ? `<span class="cooldown">${Math.ceil(cooldown / TICK_RATE)}</span>` : "")
     );
   }
@@ -265,6 +269,11 @@ function cardHtml(card: Card, slot: number | null, cooldown: number, locked: boo
     `<span title="${healer ? "Healing" : "Damage"}">${healer ? "✚" : "⚔"} ${card.damage}</span>` +
     `<span title="Range">◎ ${card.range}</span></span>`
   );
+}
+
+function uses(card: Card, left?: number): string {
+  if (card.kind !== "spell" || card.uses === undefined) return "";
+  return left === undefined ? ` · ${card.uses}× per match` : ` · ${left}/${card.uses} left`;
 }
 
 function select(slot: number) {

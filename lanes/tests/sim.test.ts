@@ -448,6 +448,73 @@ describe("spells", () => {
     run(battle, 20);
     expect(enemy.x).toBe(x);
   });
+
+  it("repair restores base health up to the maximum", () => {
+    const battle = createBattle();
+    battle.players[0].baseHp = BASE_HP - 200;
+    give(battle, 0, "repair");
+    play(battle, 0, 0);
+    expect(battle.players[0].baseHp).toBe(BASE_HP - 50);
+    battle.players[0].ready = {};
+    give(battle, 0, "repair");
+    play(battle, 0, 0);
+    expect(battle.players[0].baseHp).toBe(BASE_HP);
+  });
+
+  it("smite hits the enemy with the most health and quake hits every enemy", () => {
+    const battle = createBattle();
+    const small = spawnUnit(battle, 1, "footman", 0);
+    const big = spawnUnit(battle, 1, "golem", 1);
+    const ally = spawnUnit(battle, 0, "footman", 2);
+    give(battle, 0, "smite");
+    play(battle, 0, 0);
+    expect(big.hp).toBe(big.maxHp - 200);
+    expect(small.hp).toBe(small.maxHp);
+    give(battle, 0, "quake");
+    play(battle, 0, 0);
+    expect(small.hp).toBe(small.maxHp - 30);
+    expect(big.hp).toBe(big.maxHp - 230);
+    expect(ally.hp).toBe(ally.maxHp);
+  });
+
+  it("cataclysm kills every unit without bounty and runs out after three casts", () => {
+    const battle = createBattle();
+    for (let cast = 0; cast < 3; cast++) {
+      spawnUnit(battle, 0, "golem", 0);
+      spawnUnit(battle, 1, "knight", 1);
+      battle.players[0].ready = {};
+      give(battle, 0, "cataclysm");
+      expect(play(battle, 0, 0)).toBeNull();
+      const gold = battle.players.map((p) => p.gold);
+      step(battle);
+      expect(battle.units).toEqual([]);
+      expect(battle.players.map((p) => p.gold)).toEqual(gold);
+    }
+    battle.players[0].ready = {};
+    give(battle, 0, "cataclysm");
+    expect(play(battle, 0, 0)).toMatch(/No Cataclysm casts left/);
+  });
+
+  it("a used-up spell leaves the hand and the deck", () => {
+    const battle = createBattle({ decks: [["cataclysm", "cataclysm", "cataclysm", "footman", "footman", "footman", "archer", "archer", "archer", "brute"], STARTER_DECK] });
+    const player = battle.players[0];
+    player.gold = 10000;
+    player.tier = 3;
+    for (let i = 0; i < 3; i++) {
+      player.ready = {};
+      while (!player.hand.includes("cataclysm")) {
+        sell(battle, 0, 0);
+        expect(play(battle, 0, 0, 0)).toBeNull();
+      }
+      play(battle, 0, player.hand.indexOf("cataclysm"));
+    }
+    expect(player.used.cataclysm).toBe(3);
+    for (let i = 0; i < 30; i++) {
+      expect(player.hand).not.toContain("cataclysm");
+      sell(battle, 0, 0);
+      expect(play(battle, 0, 0, 0)).toBeNull();
+    }
+  });
 });
 
 describe("shrine", () => {

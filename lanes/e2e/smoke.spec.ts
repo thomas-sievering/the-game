@@ -255,3 +255,42 @@ test("playing a unit onto the same unit levels it up and the field shows its ran
   await alice.waitForTimeout(2500);
   await alice.screenshot({ path: shots("levels-2-field") });
 });
+
+test("a new unit takes the field and new spells show their tier and casts left", async ({ browser }) => {
+  const context = await newContext(browser);
+  const deck = ["berserker", "berserker", "berserker", "smite", "smite", "wolfrider", "cataclysm", "cataclysm", "repair", "quake"];
+  await context.addInitScript((d) => localStorage.setItem("lanes.deck", d), JSON.stringify(deck));
+  const alice = await context.newPage();
+  const bob = await (await newContext(browser)).newPage();
+
+  await alice.goto("/");
+  await alice.fill("#name", "Alice");
+  await alice.click("#create");
+  await expect(alice.locator("#lobby-code")).toHaveText(/^[A-Z]{4}$/);
+  const code = await alice.locator("#lobby-code").innerText();
+  await bob.goto("/");
+  await bob.fill("#name", "Bob");
+  await bob.fill("#code", code);
+  await bob.click("#join");
+  await expect(alice.locator("#lobby-players li")).toHaveCount(2);
+  await alice.click("#start");
+  await expect.poll(() => lanes(alice, (l) => l.phase)).toBe("playing");
+
+  // Berserker and Smite are tier I; play them until a Berserker is on the grid and a Smite was cast.
+  for (let i = 0; i < 60; i++) {
+    const { grid, spellsCast } = await lanes(alice, (l) => ({ grid: l.grid, spellsCast: l.spellsCast }));
+    if (grid.includes("berserker") && spellsCast > 0) break;
+    const cell = grid.indexOf("berserker") === -1 ? 5 : grid.indexOf("berserker");
+    const acted = (spellsCast === 0 && (await castSpell(alice))) || (await lanes(alice, (l, c) => l.levels[c] < 3, cell)) && (await placeUnit(alice, cell));
+    if (!acted) await alice.waitForTimeout(1000);
+  }
+  await expect.poll(() => lanes(alice, (l) => l.unitCount), { timeout: 30_000 }).toBeGreaterThan(0);
+  await alice.waitForTimeout(2500);
+  await alice.screenshot({ path: shots("new-1-field") });
+
+  // Cards above tier I stay locked; a Cataclysm in hand also shows its casts left.
+  const hand = await lanes(alice, (l) => l.hand);
+  if (hand.includes("cataclysm")) await expect(alice.locator(".hand-card", { hasText: "Cataclysm" }).first()).toContainText("3/3 left");
+  for (const id of hand) if (CARDS[id].tier > 1) await expect(alice.locator(".hand-card", { hasText: CARDS[id].name }).first()).toContainText("Tier");
+  await alice.screenshot({ path: shots("new-2-hand") });
+});
