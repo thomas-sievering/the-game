@@ -17,7 +17,23 @@
         <input id="code" maxlength="4" autocomplete="off" placeholder="CODE" />
         <button id="join">Join</button>
       </div>
+      <button id="home-deck">Edit deck</button>
       <p id="home-error" class="error"></p>
+    </section>
+
+    <section id="deck" class="screen deck-builder hidden">
+      <header>
+        <h2>Your deck</h2>
+        <span id="deck-count" class="deck-count"></span>
+        <span id="deck-error" class="error"></span>
+        <span class="deck-actions">
+          <button id="deck-reset">Starter deck</button>
+          <button id="deck-cancel">Cancel</button>
+          <button id="deck-done" class="primary">Done</button>
+        </span>
+      </header>
+      <p class="muted" id="deck-rules"></p>
+      <div id="deck-cards" class="collection"></div>
     </section>
 
     <section id="lobby" class="screen card hidden">
@@ -29,6 +45,7 @@
         <p class="list-title">Spectators</p>
         <ul id="lobby-spectators" class="player-list"></ul>
       </div>
+      <button id="lobby-deck" class="hidden">Edit deck</button>
       <button id="start" class="primary hidden">Start match</button>
       <p id="lobby-wait" class="muted"></p>
     </section>

@@ -42,6 +42,7 @@ A browser-based 1v1 deckbuilding auto battler in the spirit of StarCraft II's "D
 - **Shrine:** a neutral capture point sits in the middle of the centre lane. Units standing in it with no enemy units there capture it in 3 s (a held shrine first turns neutral). The owner earns +2 gold per second.
 - **Waves:** every 20 s. Each placed unit spawns once per wave, and placements are permanent for the match (Desert Strike rules).
 - **Economy:** gold trickles in each second, plus a bounty per kill. Placing a unit costs gold, and so does a spell. Spells also have a cooldown. A player can invest gold for +1 income per second, and each investment costs more. Placing a unit on an occupied cell replaces it.
+- **Deck rules:** exactly 10 cards, at most 3 copies of a card, at least one unit. Until unlocks exist every card is open to everyone; the deck is built on its own screen (from the start screen or the lobby), saved in the browser and sent to the server, which falls back to the starter deck if it's invalid.
 - **Hand:** your deck is 10 cards; you hold a hand of 4 drawn from it. Playing a card draws the next one, and the deck reshuffles when empty.
 - **Content for v1:** about 16 cards (about 12 units: melee, ranged, tank, fast, splash, healer; about 4 spells). The starter collection covers 10 of them, so 6 are earned.
 - **Rewards:** a fixed amount of coins per finished match (more for a win, nothing for leaving early). Coins buy a choice of 1 of 3 unowned cards.

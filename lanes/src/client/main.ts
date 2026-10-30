@@ -1,6 +1,6 @@
 import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
-import { CARDS, type Card, type Role } from "../shared/cards";
+import { CARDS, type Card, DECK_SIZE, MAX_COPIES, type Role, STARTER_DECK, deckError } from "../shared/cards";
 import { BASE_HP, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, SHRINE, TICK_RATE, WAVE_TICKS } from "../shared/sim";
 import { LanesState, type PlayerState } from "../shared/state";
 import { Renderer } from "./render";
@@ -17,11 +17,90 @@ let room: Room<any, LanesState> | null = null;
 /** Hand slot of the unit card waiting for a grid pad, or -1. */
 let selected = -1;
 let toastTimer = 0;
+/** Saved deck, sent when joining a room and whenever it changes in the lobby. */
+let deck = loadDeck();
+/** Deck being edited while the deck screen is open, else null. */
+let draft: string[] | null = null;
 
-function show(screen: "home" | "lobby" | "game") {
+function show(screen: "home" | "deck" | "lobby" | "game") {
   $("home").classList.toggle("hidden", screen !== "home");
+  $("deck").classList.toggle("hidden", screen !== "deck");
   $("lobby").classList.toggle("hidden", screen !== "lobby");
   $("hud").classList.toggle("hidden", screen !== "game");
+}
+
+function loadDeck(): string[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem("lanes.deck") ?? "null");
+    if (!deckError(saved)) return saved;
+  } catch {}
+  return [...STARTER_DECK];
+}
+
+function openDeck() {
+  draft = [...deck];
+  render();
+}
+
+function closeDeck(save: boolean) {
+  if (save && draft && !deckError(draft)) {
+    deck = draft;
+    localStorage.setItem("lanes.deck", JSON.stringify(deck));
+    if (room?.state.phase === "lobby") room.send("deck", deck);
+  }
+  draft = null;
+  render();
+}
+
+function changeDraft(id: string, delta: 1 | -1) {
+  if (!draft) return;
+  const copies = draft.filter((c) => c === id).length;
+  if (delta === 1 && copies < MAX_COPIES && draft.length < DECK_SIZE) draft.push(id);
+  if (delta === -1 && copies > 0) draft.splice(draft.lastIndexOf(id), 1);
+  renderDeck(draft);
+}
+
+function renderDeck(cards: string[]) {
+  show("deck");
+  const counts = new Map<string, number>();
+  for (const id of cards) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const units = cards.filter((id) => CARDS[id].kind === "unit").length;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  $("deck-count").textContent = `${cards.length}/${DECK_SIZE} cards · ${plural(units, "unit")} · ${plural(cards.length - units, "spell")}`;
+  const error = deckError(cards);
+  $("deck-error").textContent = cards.length < DECK_SIZE ? "" : (error ?? "");
+  $<HTMLButtonElement>("deck-done").disabled = !!error;
+  $("deck-rules").textContent = `Pick ${DECK_SIZE} cards, up to ${MAX_COPIES} copies of each. Click a card to add it, right-click to remove it.`;
+  const container = $("deck-cards");
+  if (!container.children.length) {
+    container.innerHTML = Object.values(CARDS)
+      .map(
+        (card) =>
+          `<div class="deck-slot" data-card="${card.id}"><div class="hand-card ${card.kind}">${cardHtml(card, null, 0)}</div>` +
+          `<div class="counter"><button data-delta="-1" aria-label="Remove ${card.name}">−</button>` +
+          `<span class="copies"></span><button data-delta="1" aria-label="Add ${card.name}">+</button></div></div>`,
+      )
+      .join("");
+    for (const slot of container.querySelectorAll<HTMLElement>(".deck-slot")) {
+      const id = slot.dataset.card!;
+      const tile = slot.querySelector<HTMLElement>(".hand-card")!;
+      tile.onclick = () => changeDraft(id, 1);
+      tile.oncontextmenu = (e) => {
+        e.preventDefault();
+        changeDraft(id, -1);
+      };
+      for (const button of slot.querySelectorAll<HTMLButtonElement>("button")) {
+        button.onclick = () => changeDraft(id, Number(button.dataset.delta) as 1 | -1);
+      }
+    }
+  }
+  for (const slot of container.querySelectorAll<HTMLElement>(".deck-slot")) {
+    const copies = counts.get(slot.dataset.card!) ?? 0;
+    slot.classList.toggle("in-deck", copies > 0);
+    slot.querySelector(".copies")!.textContent = `${copies}/${MAX_COPIES}`;
+    slot.querySelector<HTMLButtonElement>("[data-delta='-1']")!.disabled = copies === 0;
+    slot.querySelector<HTMLButtonElement>("[data-delta='1']")!.disabled = copies >= MAX_COPIES || cards.length >= DECK_SIZE;
+  }
 }
 
 function me(): PlayerState | undefined {
@@ -49,6 +128,7 @@ function renderLobby(s: LanesState) {
   for (const button of document.querySelectorAll<HTMLButtonElement>("#lobby button[data-id]")) {
     button.onclick = () => room?.send("spectate", { id: button.dataset.id, spectate: button.dataset.spectate === "true" });
   }
+  $("lobby-deck").classList.toggle("hidden", !me());
   $("start").classList.toggle("hidden", !isHost || s.players.length !== 2);
   const spectating = !me() ? "You're spectating. " : "";
   $("lobby-wait").textContent =
@@ -57,6 +137,9 @@ function renderLobby(s: LanesState) {
 
 function render() {
   const s = room?.state;
+  // The deck screen only works outside a match; a starting match closes it unsaved.
+  if (draft && s && s.phase !== "lobby") draft = null;
+  if (draft) return renderDeck(draft);
   if (!s) return show("home");
   if (s.phase === "lobby") return renderLobby(s);
   show("game");
@@ -116,8 +199,9 @@ function renderHand(self: PlayerState, tick: number) {
   }
 }
 
-function cardHtml(card: Card, slot: number, cooldown: number): string {
-  const top = `<span class="cost">${card.cost}</span><span class="key">${slot + 1}</span>`;
+/** `slot` is the hand slot whose shortcut key to show, or null outside the hand. */
+function cardHtml(card: Card, slot: number | null, cooldown: number): string {
+  const top = `<span class="cost">${card.cost}</span>${slot === null ? "" : `<span class="key">${slot + 1}</span>`}`;
   if (card.kind === "spell") {
     return (
       `${top}<span class="icon">${SPELL_ICONS[card.id] ?? "✦"}</span><strong>${card.name}</strong>` +
@@ -222,13 +306,14 @@ function main() {
   }
   $("invest").onclick = () => room?.send("invest");
   window.addEventListener("keydown", (e) => {
+    if (draft && e.key === "Escape") return closeDeck(false);
     if (room?.state.phase !== "playing" || e.target instanceof HTMLInputElement) return;
     if (e.key >= "1" && e.key <= String(HAND_SIZE)) useSlot(Number(e.key) - 1);
     else if (e.key === "Escape") select(-1);
     else if (e.key.toLowerCase() === "i") room.send("invest");
   });
 
-  const name = () => ({ name: $<HTMLInputElement>("name").value.trim() });
+  const name = () => ({ name: $<HTMLInputElement>("name").value.trim(), deck });
   $<HTMLInputElement>("name").value = localStorage.getItem("lanes.name") ?? "";
   $("create").onclick = () => enter(() => client.create("lanes", name(), LanesState));
   $("join").onclick = () => {
@@ -236,6 +321,14 @@ function main() {
     void enter(() => client.joinById(code, name(), LanesState));
   };
   $("start").onclick = () => room?.send("start");
+  $("home-deck").onclick = openDeck;
+  $("lobby-deck").onclick = openDeck;
+  $("deck-done").onclick = () => closeDeck(true);
+  $("deck-cancel").onclick = () => closeDeck(false);
+  $("deck-reset").onclick = () => {
+    draft = [...STARTER_DECK];
+    render();
+  };
   render();
 }
 
@@ -257,6 +350,10 @@ main();
   },
   get hand() {
     return [...(me()?.hand ?? [])];
+  },
+  /** The saved deck this client plays with. */
+  get deck() {
+    return [...deck];
   },
   get grid() {
     return [...(me()?.grid ?? [])];

@@ -72,6 +72,22 @@ export const CARDS: Record<string, Card> = Object.fromEntries(
 /** Cards every new player owns; also the default deck until collections exist. */
 export const STARTER_DECK = ["footman", "archer", "brute", "runner", "bomber", "medic", "spearman", "swarm", "rally", "lightning"];
 
+export const DECK_SIZE = 10;
+export const MAX_COPIES = 3;
+
+/** Returns why a deck can't be played, or null if it's legal. Every card is open to everyone until unlocks exist. */
+export function deckError(deck: unknown): string | null {
+  if (!Array.isArray(deck) || deck.length !== DECK_SIZE) return `A deck needs exactly ${DECK_SIZE} cards`;
+  const counts = new Map<string, number>();
+  for (const id of deck) {
+    if (typeof id !== "string" || !Object.hasOwn(CARDS, id)) return "Unknown card in deck";
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+    if (counts.get(id)! > MAX_COPIES) return `At most ${MAX_COPIES} copies of ${CARDS[id].name}`;
+  }
+  if (!deck.some((id) => CARDS[id].kind === "unit")) return "A deck needs at least one unit";
+  return null;
+}
+
 export function unitCard(id: string): UnitCard {
   const card = CARDS[id];
   if (card?.kind !== "unit") throw new Error(`Not a unit card: ${id}`);

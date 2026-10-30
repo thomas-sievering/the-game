@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CARDS, STARTER_DECK, unitCard } from "../src/shared/cards";
+import { CARDS, STARTER_DECK, deckError, unitCard } from "../src/shared/cards";
 import {
   type Battle,
   BASE_HP,
@@ -58,6 +58,30 @@ describe("hand and deck", () => {
       expect(player.hand.every(Boolean)).toBe(true);
       expect(player.hand.length + player.deck.length + player.discard.length).toBe(STARTER_DECK.length);
     }
+  });
+
+  it("deals from a custom deck with duplicate copies", () => {
+    const deck = ["knight", "knight", "knight", "sniper", "sniper", "golem", "catapult", "frost", "frost", "mend"];
+    const battle = createBattle({ decks: [deck, STARTER_DECK] });
+    const player = battle.players[0];
+    expect([...player.hand, ...player.deck].sort()).toEqual([...deck].sort());
+  });
+});
+
+describe("deck rules", () => {
+  it("accepts the starter deck and decks with copies", () => {
+    expect(deckError(STARTER_DECK)).toBeNull();
+    expect(deckError(["knight", "knight", "knight", "golem", "golem", "golem", "frost", "frost", "frost", "mend"])).toBeNull();
+  });
+
+  it("rejects bad decks", () => {
+    expect(deckError(STARTER_DECK.slice(1))).toMatch(/exactly/);
+    expect(deckError([...STARTER_DECK, "knight"])).toMatch(/exactly/);
+    expect(deckError("footman")).toMatch(/exactly/);
+    expect(deckError([...STARTER_DECK.slice(1), "nope"])).toMatch(/Unknown/);
+    expect(deckError([...STARTER_DECK.slice(1), "toString"])).toMatch(/Unknown/);
+    expect(deckError(["footman", "footman", "footman", "footman", ...STARTER_DECK.slice(4)])).toMatch(/copies/);
+    expect(deckError(["rally", "rally", "rally", "lightning", "lightning", "lightning", "mend", "mend", "frost", "frost"])).toMatch(/unit/);
   });
 });
 

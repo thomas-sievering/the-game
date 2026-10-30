@@ -404,3 +404,79 @@ button:disabled {
 .result {
   text-align: center;
 }
+
+.deck-builder {
+  position: fixed;
+  inset: 24px;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--panel);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+.deck-builder header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.deck-builder h2 {
+  margin: 0;
+}
+
+.deck-count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.deck-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.collection {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 14px;
+  padding: 8px 4px;
+  justify-items: center;
+}
+
+.deck-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.deck-slot .hand-card {
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.55;
+}
+
+.deck-slot.in-deck .hand-card {
+  opacity: 1;
+  border-color: var(--gold);
+}
+
+.deck-slot .counter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.deck-slot .counter button {
+  width: 32px;
+  padding: 2px 0;
+}
