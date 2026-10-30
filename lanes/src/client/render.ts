@@ -148,10 +148,25 @@ function hash(n: number): number {
 
 export class Renderer {
   readonly app = new Application();
+  /**
+   * The table, board and scenery change rarely, so they are rendered into a plain canvas behind the
+   * transparent Pixi canvas instead of every frame. Software WebGL (CI, laptops without a GPU)
+   * can't afford redrawing them, and a page that falls behind holds up every other page sharing its GPU process.
+   */
+  private still = new Container();
+  private stillCanvas: HTMLCanvasElement | null = null;
+  private parent: HTMLElement | null = null;
   private table = new Graphics();
+  /** Board and scenery in world coordinates; it follows the world's scale and origin, without the shake. */
+  private backdrop = new Container();
   private world = new Container();
   private board = new Graphics();
+  /** Forts and the shrine's stones; redrawn only when `sceneryKey` changes. */
+  private scenery = new Graphics();
+  private sceneryKey = "";
   private field = new Graphics();
+  /** What the pads were last drawn from; they are redrawn only when it changes or a pad animates. */
+  private gridKey = "";
   private grid = new Graphics();
   private units = new Graphics();
   private effects = new Graphics();
@@ -194,14 +209,18 @@ export class Renderer {
   async init(parent: HTMLElement): Promise<void> {
     await this.app.init({
       resizeTo: parent,
-      background: PALETTE.table,
+      backgroundAlpha: 0,
       antialias: true,
       autoDensity: true,
       resolution: Math.min(window.devicePixelRatio || 1, 2),
     });
+    this.parent = parent;
+    Object.assign(this.app.canvas.style, { position: "absolute", left: "0", top: "0" });
     parent.appendChild(this.app.canvas);
-    this.world.addChild(this.board, this.field, this.grid, this.labels, this.units, this.effects, this.floaters);
-    this.app.stage.addChild(this.table, this.world);
+    this.backdrop.addChild(this.board, this.scenery);
+    this.still.addChild(this.table, this.backdrop);
+    this.world.addChild(this.field, this.grid, this.labels, this.units, this.effects, this.floaters);
+    this.app.stage.addChild(this.world);
     for (let i = 0; i < 2 * CELLS; i++) {
       const [board, cell] = [Math.floor(i / CELLS), i % CELLS];
       const label = new Text({ text: "", style: { fontFamily: FONT, fontSize: 12, fontWeight: "700", fill: TABLE.ink } });
@@ -353,13 +372,18 @@ export class Renderer {
 
   private frame(dt: number): void {
     this.time += dt;
+    const shaking = this.shake > 0;
     this.shake = Math.max(0, this.shake - dt * 40);
-    this.world.position.set(
-      this.origin.x + (Math.random() - 0.5) * this.shake,
-      this.origin.y + (Math.random() - 0.5) * this.shake,
-    );
+    const [dx, dy] = [(Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake];
+    this.world.position.set(this.origin.x + dx, this.origin.y + dy);
+    if (shaking && this.stillCanvas) this.stillCanvas.style.transform = this.shake > 0 ? `translate(${dx}px, ${dy}px)` : "";
     this.drawField(dt);
-    this.drawGrid(dt);
+    const gridKey = JSON.stringify([this.boards, this.showBoth, this.interactive, this.placing, this.hoverCell, this.selectedCell]);
+    // Pads that take the armed card pulse, and a levelled-up pad flashes; otherwise the pads stay as drawn.
+    if (gridKey !== this.gridKey || this.placing !== "" || this.padFlash.some((t) => t > 0)) {
+      this.gridKey = gridKey;
+      this.drawGrid(dt);
+    }
     this.drawUnits(dt);
     this.drawEffects(dt);
     this.updateFloaters(dt);
@@ -417,7 +441,7 @@ export class Renderer {
           g.roundRect(cardX + 4, cardY + 4, cardW - 8, cardH - 26, 4).fill({ color: mix(PALETTE.felt[0], color, 0.18), alpha });
           const rim = shownLevel > 1 ? rankColor(shownLevel) : undefined;
           const r = Math.max(15, Math.min(19, miniRadius(shown) * 1.2)) * (LEVEL_SIZE[shownLevel - 1] ?? 1) * 0.92;
-          this.drawPiece(g, shown, cx, cardY + cardH - 30, r, board === 0 ? 1 : -1, { paint: color, alpha, rim, time: this.time });
+          this.drawPiece(g, shown, cx, cardY + cardH - 30, r, board === 0 ? 1 : -1, { paint: color, alpha, rim });
           if (shownLevel > 1 && !preview) g.roundRect(cardX, cardY, cardW, cardH, 6).stroke({ color: rankColor(shownLevel), width: 3 });
           if (shownLevel > 1) drawRank(g, x + PAD_SIZE - 16, y + 16, shownLevel, preview ? 0.7 : 1);
         } else {
@@ -760,15 +784,29 @@ export class Renderer {
     }
   }
 
-  /** The parts of the board that move: the forts with their banners, and the shrine. */
-  private drawField(dt = 0): void {
-    const g = this.field.clear();
+  /** Forts (left is always the local player's) and the shrine's stones, tinted by its owner. */
+  private drawScenery(): void {
+    const g = this.scenery.clear();
     this.drawShrine(g);
+    this.drawFort(g, -BASE_WIDTH, this.mySide);
+    this.drawFort(g, FIELD_WIDTH, 1 - this.mySide);
+  }
+
+  /** The parts of the board that move: banners, the shrine's crystal and capture ring, and fort flashes. */
+  private drawField(dt = 0): void {
+    const sceneryKey = `${this.mySide}|${this.shrine.owner}`;
+    if (sceneryKey !== this.sceneryKey) {
+      this.sceneryKey = sceneryKey;
+      this.drawScenery();
+      this.renderStill();
+    }
+    const g = this.field.clear();
+    this.drawCrystal(g);
     for (const [x, side] of [
       [-BASE_WIDTH, this.mySide],
       [FIELD_WIDTH, 1 - this.mySide],
     ] as const) {
-      this.drawFort(g, x, side);
+      this.drawBanner(g, x, side);
       if (this.baseFlash[side] > 0) {
         g.roundRect(x + 4, -12, BASE_WIDTH - 8, FIELD_HEIGHT + 24, 8).fill({ color: PALETTE.white, alpha: this.baseFlash[side] * 2 });
         this.baseFlash[side] = Math.max(0, this.baseFlash[side] - dt);
@@ -803,7 +841,12 @@ export class Renderer {
       g.circle(cx - 6, ty - 6, 6).fill({ color: 0xffffff, alpha: 0.18 });
       g.circle(cx, ty, 4).fill(PALETTE.brass).stroke({ color: TABLE.ink, width: 1 });
     }
-    // The banner streams back from the middle tower.
+  }
+
+  /** The banner streams back from the fort's middle tower. */
+  private drawBanner(g: Graphics, x: number, side: number): void {
+    const color = this.color(side);
+    const inward = x < 0 ? 1 : -1;
     const [px, py] = [x + BASE_WIDTH / 2, FIELD_HEIGHT / 2];
     g.moveTo(px, py).lineTo(px, py - 62).stroke({ color: TABLE.ink, width: 4, cap: "round" }).moveTo(px, py).lineTo(px, py - 62).stroke({ color: TABLE.woodLight, width: 2, cap: "round" });
     const back = -inward;
@@ -818,9 +861,9 @@ export class Renderer {
     g.poly([...flag, ...bottomEdge]).fill(color).stroke({ color: TABLE.ink, width: 2, join: "round" });
   }
 
-  /** Neutral capture point: a ring of standing stones around a floating crystal tinted by its owner. */
+  /** Neutral capture point: a ring of standing stones, tinted by its owner. */
   private drawShrine(g: Graphics): void {
-    const { owner, control } = this.shrine;
+    const { owner } = this.shrine;
     const x = this.vx(SHRINE.x);
     const y = SHRINE.y;
     const r = SHRINE.radius;
@@ -828,13 +871,6 @@ export class Renderer {
     g.circle(x, y, r).fill({ color: PALETTE.path, alpha: 0.3 });
     g.circle(x, y, r).fill({ color: tint, alpha: owner === -1 ? 0.06 : 0.16 });
     dashedCircle(g, x, y, r - 4, { color: tint, width: 2, alpha: 0.5 });
-    const k = Math.abs(control) / SHRINE.captureTicks;
-    if (k > 0 && k < 1) {
-      const toward = control > 0 ? 0 : 1;
-      // Start a fresh sub-path at the top; otherwise Pixi joins the arc to the previous shape with a stray line.
-      const start = -Math.PI / 2;
-      g.moveTo(x, y - r).arc(x, y, r, start, start + k * Math.PI * 2).stroke({ color: this.color(toward), width: 6, alpha: 0.95 });
-    }
     // Back stones first so the front ones overlap them.
     const stones = Array.from({ length: 8 }, (_, i) => (i * Math.PI) / 4 + Math.PI / 8).sort((a, b) => Math.sin(a) - Math.sin(b));
     for (const a of stones) {
@@ -844,6 +880,22 @@ export class Renderer {
       g.roundRect(sx - 6, sy - 18, 12, 20, 4).fill(TABLE.stone).stroke({ color: TABLE.ink, width: 1.5 });
       g.rect(sx - 3, sy - 14, 3, 12).fill({ color: 0xffffff, alpha: 0.15 });
       if (owner !== -1) g.circle(sx, sy - 9, 2.2).fill(tint);
+    }
+  }
+
+  /** The shrine's floating crystal and the ring that fills toward whoever is taking it. */
+  private drawCrystal(g: Graphics): void {
+    const { owner, control } = this.shrine;
+    const x = this.vx(SHRINE.x);
+    const y = SHRINE.y;
+    const r = SHRINE.radius;
+    const tint = owner === -1 ? PALETTE.shrine : this.color(owner);
+    const k = Math.abs(control) / SHRINE.captureTicks;
+    if (k > 0 && k < 1) {
+      const toward = control > 0 ? 0 : 1;
+      // Start a fresh sub-path at the top; otherwise Pixi joins the arc to the previous shape with a stray line.
+      const start = -Math.PI / 2;
+      g.moveTo(x, y - r).arc(x, y, r, start, start + k * Math.PI * 2).stroke({ color: this.color(toward), width: 6, alpha: 0.95 });
     }
     const bob = Math.sin(this.time * 2.5) * 3;
     const s = 16;
@@ -889,6 +941,25 @@ export class Renderer {
       y: HUD_TOP + (height - HUD_TOP - bottom - FIELD_HEIGHT * scale) / 2,
     };
     this.world.position.set(this.origin.x, this.origin.y);
+    this.backdrop.scale.set(scale);
+    this.backdrop.position.set(this.origin.x, this.origin.y);
+    this.renderStill();
+  }
+
+  /** Renders the table, board and scenery into the canvas behind the Pixi canvas. */
+  private renderStill(): void {
+    if (!this.parent) return;
+    const { width, height } = this.app.screen;
+    const canvas = this.app.renderer.extract.canvas({
+      target: this.still,
+      frame: new Rectangle(0, 0, width, height),
+      resolution: this.app.renderer.resolution,
+      antialias: true,
+    }) as HTMLCanvasElement;
+    Object.assign(canvas.style, { position: "absolute", left: "0", top: "0", width: `${width}px`, height: `${height}px` });
+    if (this.stillCanvas) this.stillCanvas.replaceWith(canvas);
+    else this.parent.insertBefore(canvas, this.app.canvas);
+    this.stillCanvas = canvas;
   }
 }
 
