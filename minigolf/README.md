@@ -19,7 +19,7 @@ npm run e2e        # Playwright against BASE_URL (default http://localhost:2567,
 ## Layout
 
 - `src/shared/physics.ts` – deterministic shot simulation used by both server and client.
-- `src/shared/holes/*.json` – hole definitions; each has a recorded `solution`.
+- `src/shared/holes/*.json` – hole definitions; each has a recorded `solution`. Each match draws `HOLES_PER_ROUND` (7) of them; register new holes in `src/shared/holes/index.ts`.
 - `src/server/match.ts` – pure match rules (turns, strokes, penalties, standings).
 - `src/server/GolfRoom.ts` – Colyseus room: room codes, reconnects, timers, state sync.
 - `src/client/` – PixiJS renderer, UI and synthesized sound.

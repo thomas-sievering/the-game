@@ -180,6 +180,36 @@ describe("match", () => {
     expect(m.hostId).toBe("s");
   });
 
+  it("draws seven distinct holes from the pool on start, easiest par first", () => {
+    const pool = Array.from({ length: 30 }, (_, i) => hole({ id: `h${i}`, par: 2 + ((i * 7) % 4) }));
+    const m = new Match(pool);
+    m.addPlayer("a", "A");
+    m.start();
+    const indices = m.holes.map((h) => pool.indexOf(h));
+    expect(indices).toHaveLength(7);
+    expect(new Set(indices).size).toBe(7);
+    const pars = m.holes.map((h) => h.par);
+    expect([...pars].sort((x, y) => x - y)).toEqual(pars);
+    expect(m.hole).toBe(m.holes[0]);
+  });
+
+  it("redraws the holes for every new match", () => {
+    const pool = Array.from({ length: 30 }, (_, i) => hole({ id: `h${i}` }));
+    const draws = new Set<string>();
+    const m = new Match(pool);
+    m.addPlayer("a", "A");
+    for (let i = 0; i < 5; i++) {
+      m.start();
+      draws.add(m.holes.map((h) => h.id).join());
+      while (m.phase !== "finished") {
+        while (m.phase === "playing") m.timeout("a");
+        m.nextHole();
+      }
+      m.backToLobby();
+    }
+    expect(draws.size).toBeGreaterThan(1);
+  });
+
   it("plays through all holes to a finished podium", () => {
     const m = started(2);
     for (let h = 0; h < 2; h++) {

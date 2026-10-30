@@ -1,6 +1,6 @@
 import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
-import type { Point } from "../shared/hole";
+import type { Hole, Point } from "../shared/hole";
 import { HOLES } from "../shared/holes";
 import { MAX_AIM_DISTANCE, type ShotResult, TICK_RATE, clockSubstep, simulateShot } from "../shared/physics";
 import { MAX_PLAYERS } from "../shared/rules";
@@ -59,9 +59,16 @@ function myId(): string | undefined {
   return (me() ?? spectators().find((sp) => sp.name === myName))?.id;
 }
 
+const HOLES_BY_ID = new Map(HOLES.map((h) => [h.id, h]));
+
+/** Holes drawn for this match, in play order. */
+function matchHoles(s: GolfState): Hole[] {
+  return [...s.holeIds].map((id) => HOLES_BY_ID.get(id)!);
+}
+
 function currentHole() {
   const s = state();
-  return s && s.phase !== "lobby" ? HOLES[s.holeIndex] : null;
+  return s && s.phase !== "lobby" ? (matchHoles(s)[s.holeIndex] ?? null) : null;
 }
 
 function isMyTurn(): boolean {
@@ -190,7 +197,7 @@ async function leave() {
 
 function startAnim(msg: ShotMessage) {
   waitingForShot = false;
-  const hole = HOLES[msg.holeIndex];
+  const hole = HOLES_BY_ID.get(msg.holeId)!;
   const result = simulateShot(hole, msg.start, msg.shooterId, msg.aim, { record: true, startTick: msg.startTick });
   anim = { msg, result, startedAt: performance.now(), nextEvent: 0, done: false, stateArrived: false };
   stats.shots++;
@@ -235,7 +242,7 @@ function stepAnim(now: number) {
       renderer.bumperHit(e.index);
     } else if (e.type === "cup") {
       sfx.cup();
-      renderer.burst(HOLES[anim.msg.holeIndex].cup[0], HOLES[anim.msg.holeIndex].cup[1], p?.color ?? "#ffffff");
+      renderer.burst(...HOLES_BY_ID.get(anim.msg.holeId)!.cup, p?.color ?? "#ffffff");
     } else if (e.type === "splash") {
       sfx.splash();
       renderer.splash(e.x, e.y);
@@ -347,7 +354,7 @@ function renderLobby(s: GolfState, isHost: boolean) {
 }
 
 function renderHud(s: GolfState) {
-  const hole = HOLES[s.holeIndex];
+  const hole = matchHoles(s)[s.holeIndex];
   $("hole-info").textContent = `Hole ${s.holeIndex + 1}/${s.holeCount} · ${hole.name} · Par ${hole.par}`;
   const turn = players().find((p) => p.id === s.turnId);
   const mine = isMyTurn();
@@ -366,7 +373,7 @@ function renderHud(s: GolfState) {
 }
 
 function scoreTable(s: GolfState, upTo: number) {
-  const holes = HOLES.slice(0, s.holeCount);
+  const holes = matchHoles(s);
   const head = `<tr><th></th>${holes.map((_, i) => `<th>${i + 1}</th>`).join("")}<th>Total</th></tr>`;
   const par = `<tr><td class="name muted">Par</td>${holes.map((h) => `<td class="muted">${h.par}</td>`).join("")}<td class="muted">${holes.reduce((a, h) => a + h.par, 0)}</td></tr>`;
   const rows = sortedByTotal()
@@ -394,7 +401,7 @@ function sortedByTotal() {
 function renderScoreboard(s: GolfState) {
   $("scoreboard-title").textContent = `Hole ${s.holeIndex + 1} done`;
   $("scoreboard-table").innerHTML = scoreTable(s, s.holeIndex);
-  $("scoreboard-next").textContent = s.holeIndex + 1 >= s.holeCount ? "Final results coming up…" : `Next: ${HOLES[s.holeIndex + 1].name}`;
+  $("scoreboard-next").textContent = s.holeIndex + 1 >= s.holeCount ? "Final results coming up…" : `Next: ${matchHoles(s)[s.holeIndex + 1].name}`;
 }
 
 function renderPodium(s: GolfState, isHost: boolean) {
@@ -534,6 +541,9 @@ window.__golf = {
   },
   get holeIndex() {
     return state()?.holeIndex ?? null;
+  },
+  get hole() {
+    return currentHole();
   },
   get busy() {
     return !!anim;

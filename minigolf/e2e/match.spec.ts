@@ -1,21 +1,12 @@
 import { type Page, expect, test } from "@playwright/test";
-import warmUp from "../src/shared/holes/1-warm-up.json" with { type: "json" };
-import dogleg from "../src/shared/holes/2-dogleg.json" with { type: "json" };
-import bunkers from "../src/shared/holes/3-bunkers.json" with { type: "json" };
-import waterCrossing from "../src/shared/holes/4-water-crossing.json" with { type: "json" };
-import theHill from "../src/shared/holes/5-the-hill.json" with { type: "json" };
-import gauntlet from "../src/shared/holes/6-gauntlet.json" with { type: "json" };
-import zigZag from "../src/shared/holes/7-zig-zag.json" with { type: "json" };
-import island from "../src/shared/holes/8-island.json" with { type: "json" };
-import crosswind from "../src/shared/holes/9-crosswind.json" with { type: "json" };
-import grandFinale from "../src/shared/holes/10-grand-finale.json" with { type: "json" };
 
-const HOLES = [warmUp, dogleg, bunkers, waterCrossing, theHill, gauntlet, zigZag, island, crosswind, grandFinale];
+type Point = [number, number];
 
 type Golf = {
   phase: string | null;
   code: string | null;
   holeIndex: number | null;
+  hole: { cup: Point; solution: Point[] } | null;
   busy: boolean;
   stats: { shots: number; checks: number; desyncs: number };
   spectating: boolean;
@@ -48,6 +39,7 @@ test("two players create, join and finish hole 1", async ({ browser }) => {
   await expect(alice.locator("#hud")).toBeVisible();
   await expect(bob.locator("#hud")).toBeVisible();
 
+  const hole = (await golf(alice, (g) => g.hole))!;
   const solutionIndex = new Map<Page, number>([[alice, 0], [bob, 0]]);
   let tookPlayShot = false;
   const deadline = Date.now() + 150_000;
@@ -58,10 +50,10 @@ test("two players create, join and finish hole 1", async ({ browser }) => {
       const i = solutionIndex.get(page)!;
       solutionIndex.set(page, i + 1);
       // Play the recorded solution; after that (e.g. the other ball got in the way), putt at the cup.
-      let aim = warmUp.solution[i] as [number, number] | undefined;
+      let aim: Point | undefined = hole.solution[i];
       if (!aim) {
         const ball = (await golf(page, (g) => g.myBall()))!;
-        aim = [warmUp.cup[0] - ball[0], warmUp.cup[1] - ball[1]];
+        aim = [hole.cup[0] - ball[0], hole.cup[1] - ball[1]];
       }
       await page.evaluate(([dx, dy]) => (window as any).__golf.shoot(dx, dy), aim);
       if (!tookPlayShot) {
@@ -129,7 +121,8 @@ test("the host spectates and a latecomer watches mid-match", async ({ browser })
   await expect(carol.locator("#hud")).toBeVisible({ timeout: 20_000 });
   expect(await golf(carol, (g) => g.spectating)).toBe(true);
 
-  await bob.evaluate(([dx, dy]) => (window as any).__golf.shoot(dx, dy), warmUp.solution[0]);
+  const firstShot = (await golf(bob, (g) => g.hole!.solution[0]))!;
+  await bob.evaluate(([dx, dy]) => (window as any).__golf.shoot(dx, dy), firstShot);
   for (const page of [alice, carol]) await expect.poll(() => golf(page, (g) => g.stats.shots), { timeout: 20_000 }).toBe(1);
   await carol.waitForTimeout(400);
   await carol.screenshot({ path: shots("spectate-2-watching") });
@@ -138,16 +131,18 @@ test("the host spectates and a latecomer watches mid-match", async ({ browser })
   for (const page of [alice, bob, carol]) await page.context().close();
 });
 
-test("a solo player plays all ten holes to the podium", async ({ page }) => {
+test("a solo player plays all seven holes to the podium", async ({ page }) => {
   // Balls roll in real time; six holes take about 90 s locally and longer on CI runners.
   test.setTimeout(360_000);
   await page.goto("/");
   await page.fill("#name", "Solo");
   await page.click("#create");
   await page.click("#start");
+  await expect(page.locator("#hud")).toBeVisible();
 
   let shotIndex = 0;
   let hole = -1;
+  let solution: Point[] = [];
   const deadline = Date.now() + 300_000;
   for (;;) {
     expect(Date.now()).toBeLessThan(deadline);
@@ -157,11 +152,12 @@ test("a solo player plays all ten holes to the podium", async ({ page }) => {
     if (index !== hole) {
       hole = index;
       shotIndex = 0;
+      solution = (await golf(page, (g) => g.hole!.solution))!;
       await page.waitForTimeout(300);
       await page.screenshot({ path: shots(`hole-${hole + 1}`) });
     }
     if (phase === "playing" && (await golf(page, (g) => g.isMyTurn()))) {
-      const aim = HOLES[hole].solution[shotIndex++];
+      const aim = solution[shotIndex++];
       expect(aim, `solution for hole ${hole + 1} ran out`).toBeDefined();
       await page.evaluate(([dx, dy]) => (window as any).__golf.shoot(dx, dy), aim);
     }

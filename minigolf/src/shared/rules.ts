@@ -1,6 +1,8 @@
 export const MAX_PLAYERS = 8;
 export const MAX_SPECTATORS = 8;
 export const MAX_STROKES = 8;
+/** Holes per match, drawn at random from the pool when the host starts. */
+export const HOLES_PER_ROUND = 7;
 export const SHOT_TIME_MS = 30_000;
 export const RECONNECT_SECONDS = 60;
 export const HOLE_END_MS = 6_000;
