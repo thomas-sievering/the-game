@@ -15,6 +15,7 @@ A browser-based, competitive free-for-all 2D top-down minigolf game for Thomas a
 - **Match:** 10 holes, fewest total strokes wins, max 8 strokes per hole (then picked up at 8), 30 s shot timer (timeout counts as a stroke), scoreboard after each hole, final podium, "Play again".
 - **Controls:** click toward the target; distance from the ball sets power (capped). On your turn, hover shows a direction line and a power bar that turns red at max. No bounce/trajectory prediction.
 - **Holes:** 10 handmade JSON files (easy → tricky) with walls, sand (heavy friction), water/OOB (+1 stroke, ball returns to where it was shot from), and slopes. Each file includes a recorded solution.
+- **Bumpers and moving obstacles:** some holes have round bounce pads that kick the ball back faster, sliding blocks and spinning bars. Moving obstacles run on a per-hole course clock that only advances while balls roll, so the course stands still between shots and every shot stays deterministic. They push resting balls they run into.
 - **Rooms:** create → 4-letter code → lobby with nicknames → host starts. No joining after the match starts, except as a spectator. Disconnect: 60 s to rejoin with same code and nickname, otherwise DNF and turns skipped. Host leaves → host passes to the next player. No accounts, no persistence.
 - **Spectators:** up to 8 per room, on top of the 8 players. Joining a full lobby or a running match makes you a spectator. In the lobby the host can move anyone, themselves included, between players and spectators. The host may be a spectator. Spectators see the course and scores but cannot shoot.
 - **Tech:** TypeScript everywhere. Colyseus server (authoritative, simulates every shot). PixiJS client. Custom shared deterministic physics module used by server and client.
@@ -37,7 +38,7 @@ A browser-based, competitive free-for-all 2D top-down minigolf game for Thomas a
 - Godot and the existing `multiplayer-lobby` app in nexus.
 - Downloadable builds, mobile, gamepads.
 - Accounts, persistence, level editor, procedural holes.
-- Moving obstacles, sabotage items, other twists.
+- Sabotage items, other twists.
 - Simultaneous play (possible later experiment).
 
 ## Assumptions

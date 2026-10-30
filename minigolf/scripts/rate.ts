@@ -29,8 +29,10 @@ function rotate([x, y]: Point, angle: number, scale: number): Point {
   return [(x * c - y * s) * scale, (x * s + y * c) * scale];
 }
 
-function shoot(hole: Hole, pos: Point, aim: Point) {
-  return simulateShot(hole, [{ id: "p", x: pos[0], y: pos[1] }], "p", aim).balls[0];
+/** `tick` is the course clock, so moving obstacles are where a real round would have them. */
+function shoot(hole: Hole, pos: Point, aim: Point, tick: number) {
+  const result = simulateShot(hole, [{ id: "p", x: pos[0], y: pos[1] }], "p", aim, { startTick: tick });
+  return { ...result.balls[0], ticks: result.ticks };
 }
 
 function rate(hole: Hole): { mean: number; min: number; max: number } {
@@ -39,18 +41,18 @@ function rate(hole: Hole): { mean: number; min: number; max: number } {
   for (let a = 0; a < ANGLES; a++) {
     for (const p of POWERS) aims.push(rotate([p * MAX_AIM_DISTANCE, 0], (a / ANGLES) * Math.PI * 2, 1));
   }
-  const value = (pos: Point, aim: Point) => {
-    const ball = shoot(hole, pos, aim);
+  const value = (pos: Point, aim: Point, tick: number) => {
+    const ball = shoot(hole, pos, aim, tick);
     if (ball.holed) return -1000;
     if (ball.splashed) return field(...pos) + 400;
     return field(ball.x, ball.y);
   };
   // The bot prefers shots that still work when slightly off.
-  const choose = (pos: Point) => {
+  const choose = (pos: Point, tick: number) => {
     let best = aims[0];
     let bestScore = Infinity;
     for (const aim of aims) {
-      const score = value(pos, aim) + value(pos, rotate(aim, ANGLE_NOISE, 1)) + value(pos, rotate(aim, -ANGLE_NOISE, 1));
+      const score = value(pos, aim, tick) + value(pos, rotate(aim, ANGLE_NOISE, 1), tick) + value(pos, rotate(aim, -ANGLE_NOISE, 1), tick);
       if (score < bestScore) [best, bestScore] = [aim, score];
     }
     return best;
@@ -60,9 +62,11 @@ function rate(hole: Hole): { mean: number; min: number; max: number } {
   for (let run = 0; run < RUNS; run++) {
     let pos: Point = hole.tee;
     let strokes = 0;
+    let tick = 0;
     while (strokes < MAX_STROKES) {
-      const aim = rotate(choose(pos), gaussian() * ANGLE_NOISE, 1 + gaussian() * POWER_NOISE);
-      const ball = shoot(hole, pos, aim);
+      const aim = rotate(choose(pos, tick), gaussian() * ANGLE_NOISE, 1 + gaussian() * POWER_NOISE);
+      const ball = shoot(hole, pos, aim, tick);
+      tick += ball.ticks;
       strokes += ball.splashed ? 2 : 1;
       if (ball.holed) break;
       pos = [ball.x, ball.y];

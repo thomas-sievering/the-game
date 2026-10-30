@@ -57,6 +57,20 @@ describe("match", () => {
     expect(m.turnId).toBe("p1");
   });
 
+  it("runs the course clock only while balls roll and resets it each hole", () => {
+    const m = started(2);
+    const first = m.shoot("p0", TINY);
+    expect(first.startTick).toBe(0);
+    expect(m.courseTick).toBe(first.result.ticks);
+    const holeInOne = m.shoot("p1", HOLE_IN_ONE);
+    m.timeout("p0");
+    expect(m.courseTick).toBe(first.result.ticks + holeInOne.result.ticks);
+    while (m.phase === "playing") m.timeout("p0");
+    m.nextHole();
+    expect(m.holeIndex).toBe(1);
+    expect(m.courseTick).toBe(0);
+  });
+
   it("rejects shots out of turn", () => {
     const m = started(2);
     expect(() => m.shoot("p1", TINY)).toThrow();

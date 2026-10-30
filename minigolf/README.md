@@ -26,7 +26,7 @@ npm run e2e        # Playwright against BASE_URL (default http://localhost:2567,
 
 ## Holes
 
-Holes are JSON: `bounds` (fairway polygon, edges are walls), `obstacles` (solid polygons), `zones` (`sand`, `water`, `slope` with `force`), `tee`, `cup`, `par`.
+Holes are JSON: `bounds` (fairway polygon, edges are walls), `obstacles` (solid polygons), `zones` (`sand`, `water`, `slope` with `force`), optional `bumpers` (round bounce pads) and `movers` (`slider` blocks and `spinner` bars, see `src/shared/hole.ts`), `tee`, `cup`, `par`.
 After adding or editing a hole, run `npm run solve -- <file-substring>` to record a solution, then `npm test`.
 
 ## Deploy
