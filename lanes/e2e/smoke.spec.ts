@@ -1,4 +1,4 @@
-import { type Page, expect, test } from "@playwright/test";
+import { type Browser, type Page, expect, test } from "@playwright/test";
 import { CARDS, STARTER_DECK } from "../src/shared/cards";
 
 type Lanes = {
@@ -19,6 +19,13 @@ type Lanes = {
 const shots = (name: string) => `${process.env.SCREENSHOT_DIR ?? "artifacts/e2e"}/${name}.png`;
 const lanes = <T>(page: Page, fn: (l: Lanes, arg: any) => T, arg?: unknown) =>
   page.evaluate(`(${fn.toString()})(window.__lanes, ${JSON.stringify(arg ?? null)})`) as Promise<T>;
+
+/** A browser context that starts muted: CI runners have no audio device, and a live AudioContext there can stall the page. */
+async function newContext(browser: Browser) {
+  const context = await browser.newContext();
+  await context.addInitScript(() => localStorage.setItem("lanes.muted", "1"));
+  return context;
+}
 
 /** Places the first affordable unit card in the hand on a cell via keyboard + click. */
 async function placeUnit(page: Page, cell: number): Promise<boolean> {
@@ -43,7 +50,7 @@ async function castSpell(page: Page): Promise<boolean> {
 }
 
 test("the host spectates and a latecomer watches mid-match", async ({ browser }) => {
-  const pages = await Promise.all([0, 1, 2, 3].map(async () => (await browser.newContext()).newPage()));
+  const pages = await Promise.all([0, 1, 2, 3].map(async () => (await newContext(browser)).newPage()));
   const [alice, bob, carol, dave] = pages;
 
   await alice.goto("/");
@@ -91,8 +98,8 @@ test("the host spectates and a latecomer watches mid-match", async ({ browser })
 });
 
 test("two players build, a wave fights and a spell is cast", async ({ browser }) => {
-  const alice = await (await browser.newContext()).newPage();
-  const bob = await (await browser.newContext()).newPage();
+  const alice = await (await newContext(browser)).newPage();
+  const bob = await (await newContext(browser)).newPage();
 
   await alice.goto("/");
   await alice.fill("#name", "Alice");
@@ -150,8 +157,8 @@ test("two players build, a wave fights and a spell is cast", async ({ browser })
 });
 
 test("a player builds a deck in the lobby and draws only from it", async ({ browser }) => {
-  const alice = await (await browser.newContext()).newPage();
-  const bob = await (await browser.newContext()).newPage();
+  const alice = await (await newContext(browser)).newPage();
+  const bob = await (await newContext(browser)).newPage();
 
   await alice.goto("/");
   await alice.fill("#name", "Alice");
@@ -194,12 +201,12 @@ test("a player builds a deck in the lobby and draws only from it", async ({ brow
 });
 
 test("playing a unit onto the same unit levels it up and the field shows its rank", async ({ browser }) => {
-  const context = await browser.newContext();
+  const context = await newContext(browser);
   // Only cheap units, so levels come quickly.
   const deck = ["footman", "footman", "footman", "runner", "runner", "runner", "archer", "archer", "archer", "meteor"];
   await context.addInitScript((d) => localStorage.setItem("lanes.deck", d), JSON.stringify(deck));
   const alice = await context.newPage();
-  const bob = await (await browser.newContext()).newPage();
+  const bob = await (await newContext(browser)).newPage();
 
   await alice.goto("/");
   await alice.fill("#name", "Alice");
