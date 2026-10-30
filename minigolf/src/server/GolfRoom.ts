@@ -5,6 +5,7 @@ import { HOLES } from "../shared/holes";
 import { TICK_RATE } from "../shared/physics";
 import {
   HOLE_END_MS,
+  HOLES_PER_ROUND,
   MAX_NAME_LENGTH,
   MAX_PLAYERS,
   MAX_SPECTATORS,
@@ -60,7 +61,6 @@ export class GolfRoom extends Room<{ state: GolfState }> {
       const aim = message?.aim;
       if (!id || this.animating || !Array.isArray(aim) || aim.length !== 2) return;
       const point: Point = [Number(aim[0]), Number(aim[1])];
-      const holeIndex = this.match.holeIndex;
       let outcome;
       try {
         outcome = this.match.shoot(id, point);
@@ -68,7 +68,7 @@ export class GolfRoom extends Room<{ state: GolfState }> {
         return;
       }
       this.turnTimer?.clear();
-      const shot: ShotMessage = { shooterId: id, holeIndex, aim: point, start: outcome.start, startTick: outcome.startTick };
+      const shot: ShotMessage = { shooterId: id, holeId: this.match.hole.id, aim: point, start: outcome.start, startTick: outcome.startTick };
       this.broadcast("shot", shot);
       // Hold the new state back until clients have watched the ball roll.
       this.animating = true;
@@ -93,7 +93,7 @@ export class GolfRoom extends Room<{ state: GolfState }> {
   async onCreate() {
     this.roomId = await this.generateCode();
     this.state.code = this.roomId;
-    this.state.holeCount = HOLES.length;
+    this.state.holeCount = Math.min(HOLES_PER_ROUND, HOLES.length);
     this.state.turnMs = SHOT_TIME_MS;
   }
 
@@ -205,6 +205,12 @@ export class GolfRoom extends Room<{ state: GolfState }> {
     s.phase = m.phase;
     s.hostId = m.hostId ?? "";
     s.holeIndex = m.holeIndex;
+    const holeIds = m.holes.map((h) => h.id);
+    if (holeIds.length !== s.holeIds.length || holeIds.some((id, i) => s.holeIds[i] !== id)) {
+      s.holeIds.clear();
+      for (const id of holeIds) s.holeIds.push(id);
+      s.holeCount = holeIds.length;
+    }
     s.turnId = m.turnId ?? "";
     s.turnSeq = m.turnSeq;
     s.courseTick = m.courseTick;

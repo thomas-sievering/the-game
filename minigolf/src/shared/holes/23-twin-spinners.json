@@ -1,0 +1,18 @@
+{
+  "id": "twin-spinners",
+  "name": "Twin Spinners",
+  "par": 3,
+  "bounds": [[60, 100], [1160, 100], [1160, 500], [60, 500]],
+  "obstacles": [
+    [[420, 100], [860, 100], [860, 190], [420, 190]],
+    [[420, 410], [860, 410], [860, 500], [420, 500]]
+  ],
+  "zones": [],
+  "movers": [
+    { "type": "spinner", "center": [520, 300], "length": 90, "width": 14, "arms": 2, "period": 3 },
+    { "type": "spinner", "center": [760, 300], "length": 90, "width": 14, "arms": 2, "period": -3 }
+  ],
+  "tee": [120, 300],
+  "cup": [1060, 300],
+  "solution": [[180.63,-48.4],[139.88,29.73]]
+}

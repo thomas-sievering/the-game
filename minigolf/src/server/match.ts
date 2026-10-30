@@ -1,7 +1,7 @@
 // Pure match rules, independent of Colyseus so they can be unit tested.
 import type { Hole, Point } from "../shared/hole";
 import { type ShotResult, type SimBall, simulateShot } from "../shared/physics";
-import { BALL_COLORS, MAX_PLAYERS, MAX_STROKES } from "../shared/rules";
+import { BALL_COLORS, HOLES_PER_ROUND, MAX_PLAYERS, MAX_STROKES } from "../shared/rules";
 
 export type Phase = "lobby" | "playing" | "holeEnd" | "finished";
 
@@ -49,7 +49,14 @@ export class Match {
   /** Ticks balls have rolled on this hole; moving obstacles are posed from it. */
   courseTick = 0;
 
-  constructor(readonly holes: Hole[]) {}
+  /** Holes of the current match, drawn from the pool on start. */
+  holes: Hole[] = [];
+
+  constructor(
+    readonly pool: Hole[],
+    readonly roundLength = HOLES_PER_ROUND,
+    private readonly random: () => number = Math.random,
+  ) {}
 
   get hole(): Hole {
     return this.holes[this.holeIndex];
@@ -150,6 +157,7 @@ export class Match {
       p.strokes = [];
       p.dnf = false;
     }
+    this.holes = this.drawHoles();
     this.phase = "playing";
     this.beginHole(0);
   }
@@ -167,6 +175,19 @@ export class Match {
     this.holeIndex = 0;
     this.turnId = null;
     this.reassignHost();
+  }
+
+  /** Random holes from the pool, easiest par first (pool order breaks ties) so the round ramps up. */
+  private drawHoles(): Hole[] {
+    const indices = this.pool.map((_, i) => i);
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(this.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    return indices
+      .slice(0, Math.min(this.roundLength, this.pool.length))
+      .sort((a, b) => this.pool[a].par - this.pool[b].par || a - b)
+      .map((i) => this.pool[i]);
   }
 
   private beginHole(index: number): void {

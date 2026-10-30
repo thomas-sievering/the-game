@@ -34,6 +34,8 @@ export const GolfState = schema(
     hostId: t.string().default(""),
     holeIndex: t.uint8().default(0),
     holeCount: t.uint8().default(0),
+    /** Ids of the holes drawn for this match, in play order. */
+    holeIds: t.array("string"),
     turnId: t.string().default(""),
     /** Changes whenever a new turn starts; clients restart their shot clock on change. */
     turnSeq: t.number().default(0),
@@ -52,7 +54,7 @@ export type Phase = "lobby" | "playing" | "holeEnd" | "finished";
 /** Broadcast when a shot is taken; clients replay it with the shared physics. */
 export interface ShotMessage {
   shooterId: string;
-  holeIndex: number;
+  holeId: string;
   aim: [number, number];
   start: { id: string; x: number; y: number }[];
   startTick: number;
