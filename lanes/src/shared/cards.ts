@@ -8,6 +8,9 @@ export const SIZE: Record<Role, number> = { melee: 15, ranged: 14, tank: 21, fas
 /** Tech tier a player must have researched before playing the card. */
 export type Tier = 1 | 2 | 3;
 
+/** Which layer a unit can attack: units on the ground (and towers), fliers, or both. */
+export type Hits = "ground" | "air" | "both";
+
 export interface UnitCard {
   kind: "unit";
   id: string;
@@ -28,6 +31,10 @@ export interface UnitCard {
   splash?: number;
   /** Copies spawned each wave. */
   count?: number;
+  /** Flies over the board: ignores ground-only attackers and doesn't hold the shrine. */
+  flying?: boolean;
+  /** What it can attack; "ground" when unset. Healers heal both. */
+  hits?: Hits;
   text: string;
 }
 
@@ -72,19 +79,22 @@ const spell = (card: Omit<SpellCard, "kind">): SpellCard => ({ kind: "spell", ..
 export const CARDS: Record<string, Card> = Object.fromEntries(
   [
     unit({ id: "footman", name: "Footman", tier: 1, role: "melee", cost: 25, bounty: 5, hp: 120, damage: 12, range: 24, speed: 40, attackTicks: 20, text: "Sturdy melee soldier." }),
-    unit({ id: "archer", name: "Archer", tier: 1, role: "ranged", cost: 30, bounty: 6, hp: 60, damage: 10, range: 140, speed: 36, attackTicks: 24, text: "Shoots from range." }),
+    unit({ id: "archer", name: "Archer", tier: 1, role: "ranged", cost: 30, bounty: 6, hp: 60, damage: 10, range: 140, speed: 36, attackTicks: 24, hits: "both", text: "Shoots from range. Hits fliers." }),
     unit({ id: "brute", name: "Brute", tier: 2, role: "tank", cost: 50, bounty: 10, hp: 400, damage: 15, range: 24, speed: 26, attackTicks: 30, text: "Slow, soaks up damage." }),
     unit({ id: "runner", name: "Runner", tier: 1, role: "fast", cost: 20, bounty: 4, hp: 50, damage: 8, range: 20, speed: 90, attackTicks: 12, text: "Very fast, fragile." }),
     unit({ id: "bomber", name: "Bomber", tier: 2, role: "splash", cost: 45, bounty: 9, hp: 70, damage: 18, range: 110, speed: 32, attackTicks: 40, splash: 50, text: "Ranged blasts hit groups." }),
     unit({ id: "medic", name: "Medic", tier: 1, role: "healer", cost: 40, bounty: 8, hp: 70, damage: 10, range: 100, speed: 36, attackTicks: 20, text: "Heals the most hurt ally nearby." }),
-    unit({ id: "spearman", name: "Spearman", tier: 1, role: "melee", cost: 35, bounty: 7, hp: 140, damage: 16, range: 50, speed: 38, attackTicks: 22, text: "Melee with extra reach." }),
+    unit({ id: "spearman", name: "Spearman", tier: 1, role: "melee", cost: 35, bounty: 7, hp: 140, damage: 16, range: 50, speed: 38, attackTicks: 22, hits: "both", text: "Long reach that hits fliers too." }),
     unit({ id: "swarm", name: "Swarm", tier: 1, role: "fast", cost: 30, bounty: 2, hp: 30, damage: 5, range: 18, speed: 70, attackTicks: 10, count: 3, text: "Three quick critters per wave." }),
     unit({ id: "knight", name: "Knight", tier: 2, role: "melee", cost: 60, bounty: 12, hp: 220, damage: 25, range: 26, speed: 50, attackTicks: 20, text: "Strong and quick melee." }),
-    unit({ id: "sniper", name: "Sniper", tier: 2, role: "ranged", cost: 55, bounty: 11, hp: 50, damage: 40, range: 260, speed: 30, attackTicks: 60, text: "Huge range, slow shots." }),
+    unit({ id: "sniper", name: "Sniper", tier: 2, role: "ranged", cost: 55, bounty: 11, hp: 50, damage: 40, range: 260, speed: 30, attackTicks: 60, hits: "both", text: "Huge range, slow shots. Hits fliers." }),
     unit({ id: "golem", name: "Golem", tier: 3, role: "tank", cost: 90, bounty: 18, hp: 900, damage: 30, range: 28, speed: 18, attackTicks: 40, text: "A walking wall." }),
     unit({ id: "catapult", name: "Catapult", tier: 3, role: "splash", cost: 80, bounty: 16, hp: 150, damage: 40, range: 220, speed: 20, attackTicks: 70, splash: 70, text: "Long-range area damage." }),
     unit({ id: "berserker", name: "Berserker", tier: 1, role: "melee", cost: 45, bounty: 9, hp: 160, damage: 9, range: 22, speed: 46, attackTicks: 9, text: "Frenzied axe, very fast swings." }),
     unit({ id: "wolfrider", name: "Wolf Rider", tier: 2, role: "fast", cost: 45, bounty: 9, hp: 130, damage: 14, range: 24, speed: 80, attackTicks: 16, text: "Fast cavalry that bites back." }),
+    unit({ id: "hawk", name: "Hawk", tier: 1, role: "fast", cost: 30, bounty: 6, hp: 70, damage: 14, range: 30, speed: 75, attackTicks: 14, flying: true, hits: "air", text: "Flying hunter that only attacks fliers." }),
+    unit({ id: "balloon", name: "Balloon", tier: 2, role: "splash", cost: 55, bounty: 11, hp: 200, damage: 22, range: 20, speed: 24, attackTicks: 40, splash: 45, flying: true, text: "Flies, drops bombs on the ground below." }),
+    unit({ id: "drake", name: "Drake", tier: 3, role: "tank", cost: 85, bounty: 17, hp: 420, damage: 26, range: 60, speed: 40, attackTicks: 30, splash: 30, flying: true, hits: "both", text: "Flying fire-breather that hits everything." }),
     spell({ id: "rally", name: "Rally", tier: 1, cost: 40, cooldownTicks: 400, effect: { type: "haste", multiplier: 1.5, ticks: 100 }, text: "All your units +50% speed for 5 s." }),
     spell({ id: "lightning", name: "Lightning", tier: 1, cost: 50, cooldownTicks: 300, effect: { type: "lightning", targets: 3, damage: 60 }, text: "Hits the 3 frontmost enemies for 60." }),
     spell({ id: "mend", name: "Mend", tier: 1, cost: 40, cooldownTicks: 400, effect: { type: "heal", amount: 100 }, text: "Heals all your units by 100." }),
@@ -116,6 +126,12 @@ export function deckError(deck: unknown): string | null {
   }
   if (!deck.some((id) => CARDS[id].kind === "unit")) return "A deck needs at least one unit";
   return null;
+}
+
+/** Whether a unit of this card can attack something flying (or not). */
+export function canHit(card: UnitCard, flying: boolean): boolean {
+  const hits = card.hits ?? "ground";
+  return hits === "both" || (hits === "air") === flying;
 }
 
 export function unitCard(id: string): UnitCard {
