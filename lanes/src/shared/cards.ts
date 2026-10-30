@@ -5,10 +5,14 @@ export type Role = "melee" | "ranged" | "tank" | "fast" | "splash" | "healer";
 /** Body radius per role, in field units; also used to keep allies from stacking. */
 export const SIZE: Record<Role, number> = { melee: 15, ranged: 14, tank: 21, fast: 11, splash: 16, healer: 14 };
 
+/** Tech tier a player must have researched before playing the card. */
+export type Tier = 1 | 2 | 3;
+
 export interface UnitCard {
   kind: "unit";
   id: string;
   name: string;
+  tier: Tier;
   role: Role;
   cost: number;
   /** Gold the opponent earns for each kill. */
@@ -51,6 +55,7 @@ export interface SpellCard {
   kind: "spell";
   id: string;
   name: string;
+  tier: Tier;
   cost: number;
   cooldownTicks: number;
   /** Casts allowed per player per match; unlimited when unset. */
@@ -66,31 +71,31 @@ const spell = (card: Omit<SpellCard, "kind">): SpellCard => ({ kind: "spell", ..
 
 export const CARDS: Record<string, Card> = Object.fromEntries(
   [
-    unit({ id: "footman", name: "Footman", role: "melee", cost: 25, bounty: 5, hp: 120, damage: 12, range: 24, speed: 40, attackTicks: 20, text: "Sturdy melee soldier." }),
-    unit({ id: "archer", name: "Archer", role: "ranged", cost: 30, bounty: 6, hp: 60, damage: 10, range: 140, speed: 36, attackTicks: 24, text: "Shoots from range." }),
-    unit({ id: "brute", name: "Brute", role: "tank", cost: 50, bounty: 10, hp: 400, damage: 15, range: 24, speed: 26, attackTicks: 30, text: "Slow, soaks up damage." }),
-    unit({ id: "runner", name: "Runner", role: "fast", cost: 20, bounty: 4, hp: 50, damage: 8, range: 20, speed: 90, attackTicks: 12, text: "Very fast, fragile." }),
-    unit({ id: "bomber", name: "Bomber", role: "splash", cost: 45, bounty: 9, hp: 70, damage: 18, range: 110, speed: 32, attackTicks: 40, splash: 50, text: "Ranged blasts hit groups." }),
-    unit({ id: "medic", name: "Medic", role: "healer", cost: 40, bounty: 8, hp: 70, damage: 10, range: 100, speed: 36, attackTicks: 20, text: "Heals the most hurt ally nearby." }),
-    unit({ id: "spearman", name: "Spearman", role: "melee", cost: 35, bounty: 7, hp: 140, damage: 16, range: 50, speed: 38, attackTicks: 22, text: "Melee with extra reach." }),
-    unit({ id: "swarm", name: "Swarm", role: "fast", cost: 30, bounty: 2, hp: 30, damage: 5, range: 18, speed: 70, attackTicks: 10, count: 3, text: "Three quick critters per wave." }),
-    unit({ id: "knight", name: "Knight", role: "melee", cost: 60, bounty: 12, hp: 220, damage: 25, range: 26, speed: 50, attackTicks: 20, text: "Strong and quick melee." }),
-    unit({ id: "sniper", name: "Sniper", role: "ranged", cost: 55, bounty: 11, hp: 50, damage: 40, range: 260, speed: 30, attackTicks: 60, text: "Huge range, slow shots." }),
-    unit({ id: "golem", name: "Golem", role: "tank", cost: 90, bounty: 18, hp: 900, damage: 30, range: 28, speed: 18, attackTicks: 40, text: "A walking wall." }),
-    unit({ id: "catapult", name: "Catapult", role: "splash", cost: 80, bounty: 16, hp: 150, damage: 40, range: 220, speed: 20, attackTicks: 70, splash: 70, text: "Long-range area damage." }),
-    unit({ id: "berserker", name: "Berserker", role: "melee", cost: 45, bounty: 9, hp: 160, damage: 9, range: 22, speed: 46, attackTicks: 9, text: "Frenzied axe, very fast swings." }),
-    unit({ id: "wolfrider", name: "Wolf Rider", role: "fast", cost: 45, bounty: 9, hp: 130, damage: 14, range: 24, speed: 80, attackTicks: 16, text: "Fast cavalry that bites back." }),
-    spell({ id: "rally", name: "Rally", cost: 40, cooldownTicks: 400, effect: { type: "haste", multiplier: 1.5, ticks: 100 }, text: "All your units +50% speed for 5 s." }),
-    spell({ id: "lightning", name: "Lightning", cost: 50, cooldownTicks: 300, effect: { type: "lightning", targets: 3, damage: 60 }, text: "Hits the 3 frontmost enemies for 60." }),
-    spell({ id: "mend", name: "Mend", cost: 40, cooldownTicks: 400, effect: { type: "heal", amount: 100 }, text: "Heals all your units by 100." }),
-    spell({ id: "meteor", name: "Meteor", cost: 60, cooldownTicks: 400, effect: { type: "meteor", damage: 60, radius: 80 }, text: "Smashes the biggest enemy group for 60." }),
-    spell({ id: "fury", name: "Fury", cost: 55, cooldownTicks: 500, effect: { type: "fury", multiplier: 2, ticks: 80 }, text: "Your units deal double damage for 4 s." }),
-    spell({ id: "muster", name: "Muster", cost: 50, cooldownTicks: 500, effect: { type: "summon", card: "footman" }, text: "A Footman joins every lane right now." }),
-    spell({ id: "frost", name: "Frost", cost: 60, cooldownTicks: 600, effect: { type: "freeze", ticks: 60 }, text: "Freezes all enemy units for 3 s." }),
-    spell({ id: "repair", name: "Repair", cost: 70, cooldownTicks: 600, effect: { type: "repair", amount: 150 }, text: "Repairs your fort by 150." }),
-    spell({ id: "smite", name: "Smite", cost: 50, cooldownTicks: 400, effect: { type: "smite", damage: 200 }, text: "Strikes the toughest enemy for 200." }),
-    spell({ id: "quake", name: "Quake", cost: 60, cooldownTicks: 500, effect: { type: "quake", damage: 30 }, text: "Every enemy unit takes 30." }),
-    spell({ id: "cataclysm", name: "Cataclysm", cost: 100, cooldownTicks: 1200, uses: 3, effect: { type: "wipe" }, text: "Destroys every unit on the field, yours too. No bounty." }),
+    unit({ id: "footman", name: "Footman", tier: 1, role: "melee", cost: 25, bounty: 5, hp: 120, damage: 12, range: 24, speed: 40, attackTicks: 20, text: "Sturdy melee soldier." }),
+    unit({ id: "archer", name: "Archer", tier: 1, role: "ranged", cost: 30, bounty: 6, hp: 60, damage: 10, range: 140, speed: 36, attackTicks: 24, text: "Shoots from range." }),
+    unit({ id: "brute", name: "Brute", tier: 2, role: "tank", cost: 50, bounty: 10, hp: 400, damage: 15, range: 24, speed: 26, attackTicks: 30, text: "Slow, soaks up damage." }),
+    unit({ id: "runner", name: "Runner", tier: 1, role: "fast", cost: 20, bounty: 4, hp: 50, damage: 8, range: 20, speed: 90, attackTicks: 12, text: "Very fast, fragile." }),
+    unit({ id: "bomber", name: "Bomber", tier: 2, role: "splash", cost: 45, bounty: 9, hp: 70, damage: 18, range: 110, speed: 32, attackTicks: 40, splash: 50, text: "Ranged blasts hit groups." }),
+    unit({ id: "medic", name: "Medic", tier: 1, role: "healer", cost: 40, bounty: 8, hp: 70, damage: 10, range: 100, speed: 36, attackTicks: 20, text: "Heals the most hurt ally nearby." }),
+    unit({ id: "spearman", name: "Spearman", tier: 1, role: "melee", cost: 35, bounty: 7, hp: 140, damage: 16, range: 50, speed: 38, attackTicks: 22, text: "Melee with extra reach." }),
+    unit({ id: "swarm", name: "Swarm", tier: 1, role: "fast", cost: 30, bounty: 2, hp: 30, damage: 5, range: 18, speed: 70, attackTicks: 10, count: 3, text: "Three quick critters per wave." }),
+    unit({ id: "knight", name: "Knight", tier: 2, role: "melee", cost: 60, bounty: 12, hp: 220, damage: 25, range: 26, speed: 50, attackTicks: 20, text: "Strong and quick melee." }),
+    unit({ id: "sniper", name: "Sniper", tier: 2, role: "ranged", cost: 55, bounty: 11, hp: 50, damage: 40, range: 260, speed: 30, attackTicks: 60, text: "Huge range, slow shots." }),
+    unit({ id: "golem", name: "Golem", tier: 3, role: "tank", cost: 90, bounty: 18, hp: 900, damage: 30, range: 28, speed: 18, attackTicks: 40, text: "A walking wall." }),
+    unit({ id: "catapult", name: "Catapult", tier: 3, role: "splash", cost: 80, bounty: 16, hp: 150, damage: 40, range: 220, speed: 20, attackTicks: 70, splash: 70, text: "Long-range area damage." }),
+    unit({ id: "berserker", name: "Berserker", tier: 1, role: "melee", cost: 45, bounty: 9, hp: 160, damage: 9, range: 22, speed: 46, attackTicks: 9, text: "Frenzied axe, very fast swings." }),
+    unit({ id: "wolfrider", name: "Wolf Rider", tier: 2, role: "fast", cost: 45, bounty: 9, hp: 130, damage: 14, range: 24, speed: 80, attackTicks: 16, text: "Fast cavalry that bites back." }),
+    spell({ id: "rally", name: "Rally", tier: 1, cost: 40, cooldownTicks: 400, effect: { type: "haste", multiplier: 1.5, ticks: 100 }, text: "All your units +50% speed for 5 s." }),
+    spell({ id: "lightning", name: "Lightning", tier: 1, cost: 50, cooldownTicks: 300, effect: { type: "lightning", targets: 3, damage: 60 }, text: "Hits the 3 frontmost enemies for 60." }),
+    spell({ id: "mend", name: "Mend", tier: 1, cost: 40, cooldownTicks: 400, effect: { type: "heal", amount: 100 }, text: "Heals all your units by 100." }),
+    spell({ id: "meteor", name: "Meteor", tier: 2, cost: 60, cooldownTicks: 400, effect: { type: "meteor", damage: 60, radius: 80 }, text: "Smashes the biggest enemy group for 60." }),
+    spell({ id: "fury", name: "Fury", tier: 2, cost: 55, cooldownTicks: 500, effect: { type: "fury", multiplier: 2, ticks: 80 }, text: "Your units deal double damage for 4 s." }),
+    spell({ id: "muster", name: "Muster", tier: 2, cost: 50, cooldownTicks: 500, effect: { type: "summon", card: "footman" }, text: "A Footman joins every lane right now." }),
+    spell({ id: "frost", name: "Frost", tier: 3, cost: 60, cooldownTicks: 600, effect: { type: "freeze", ticks: 60 }, text: "Freezes all enemy units for 3 s." }),
+    spell({ id: "repair", name: "Repair", tier: 2, cost: 70, cooldownTicks: 600, effect: { type: "repair", amount: 150 }, text: "Repairs your fort by 150." }),
+    spell({ id: "smite", name: "Smite", tier: 1, cost: 50, cooldownTicks: 400, effect: { type: "smite", damage: 200 }, text: "Strikes the toughest enemy for 200." }),
+    spell({ id: "quake", name: "Quake", tier: 2, cost: 60, cooldownTicks: 500, effect: { type: "quake", damage: 30 }, text: "Every enemy unit takes 30." }),
+    spell({ id: "cataclysm", name: "Cataclysm", tier: 3, cost: 100, cooldownTicks: 1200, uses: 3, effect: { type: "wipe" }, text: "Destroys every unit on the field, yours too. No bounty." }),
   ].map((card) => [card.id, card]),
 );
 

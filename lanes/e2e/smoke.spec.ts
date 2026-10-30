@@ -30,7 +30,7 @@ async function newContext(browser: Browser) {
 /** Places the first affordable unit card in the hand on a cell via keyboard + click. */
 async function placeUnit(page: Page, cell: number): Promise<boolean> {
   const { hand, gold } = await lanes(page, (l) => ({ hand: l.hand, gold: l.gold }));
-  const slot = hand.findIndex((id) => CARDS[id]?.kind === "unit" && CARDS[id].cost <= gold);
+  const slot = hand.findIndex((id) => CARDS[id]?.kind === "unit" && CARDS[id].tier === 1 && CARDS[id].cost <= gold);
   if (slot === -1) return false;
   await page.keyboard.press(String(slot + 1));
   const point = await lanes(page, (l, c) => l.cellOnScreen(c), cell);
@@ -42,7 +42,7 @@ async function placeUnit(page: Page, cell: number): Promise<boolean> {
 /** Casts a spell from the hand if one is there and affordable. */
 async function castSpell(page: Page): Promise<boolean> {
   const { hand, gold } = await lanes(page, (l) => ({ hand: l.hand, gold: l.gold }));
-  const slot = hand.findIndex((id) => CARDS[id]?.kind === "spell" && CARDS[id].cost <= gold);
+  const slot = hand.findIndex((id) => CARDS[id]?.kind === "spell" && CARDS[id].tier === 1 && CARDS[id].cost <= gold);
   if (slot === -1) return false;
   await page.locator(".hand-card").nth(slot).click();
   await expect.poll(() => lanes(page, (l) => l.spellsCast)).toBeGreaterThan(0);
@@ -118,6 +118,7 @@ test("two players build, a wave fights and a spell is cast", { tag: "@prod" }, a
   await alice.click("#start");
   await expect.poll(() => lanes(bob, (l) => l.phase)).toBe("playing");
   await expect(alice.locator(".hand-card strong")).toHaveCount(4);
+  await expect(alice.locator("#research")).toHaveText("Tier II 250 · 40 s");
 
   for (const [page, cells] of [
     [alice, [5, 7]],
@@ -227,7 +228,7 @@ test("playing a unit onto the same unit levels it up and the field shows its ran
   for (let i = 0; i < 60; i++) {
     const { hand, gold, grid, levels } = await lanes(alice, (l) => ({ hand: l.hand, gold: l.gold, grid: l.grid, levels: l.levels }));
     if (done(levels)) break;
-    const slot = hand.findIndex((id) => CARDS[id]?.kind === "unit" && CARDS[id].cost <= gold);
+    const slot = hand.findIndex((id) => CARDS[id]?.kind === "unit" && CARDS[id].tier === 1 && CARDS[id].cost <= gold);
     if (slot === -1) {
       await alice.waitForTimeout(1000);
       continue;
@@ -255,9 +256,9 @@ test("playing a unit onto the same unit levels it up and the field shows its ran
   await alice.screenshot({ path: shots("levels-2-field") });
 });
 
-test("new units take the field and cataclysm clears it", async ({ browser }) => {
+test("a new unit takes the field and new spells show their tier and casts left", async ({ browser }) => {
   const context = await newContext(browser);
-  const deck = ["berserker", "berserker", "wolfrider", "wolfrider", "cataclysm", "cataclysm", "cataclysm", "smite", "quake", "repair"];
+  const deck = ["berserker", "berserker", "berserker", "smite", "smite", "wolfrider", "cataclysm", "cataclysm", "repair", "quake"];
   await context.addInitScript((d) => localStorage.setItem("lanes.deck", d), JSON.stringify(deck));
   const alice = await context.newPage();
   const bob = await (await newContext(browser)).newPage();
@@ -275,31 +276,21 @@ test("new units take the field and cataclysm clears it", async ({ browser }) => 
   await alice.click("#start");
   await expect.poll(() => lanes(alice, (l) => l.phase)).toBe("playing");
 
-  // Put both new units on the grid; the shuffle decides which comes first.
+  // Berserker and Smite are tier I; play them until a Berserker is on the grid and a Smite was cast.
   for (let i = 0; i < 60; i++) {
-    const grid = await lanes(alice, (l) => l.grid);
-    if (grid.includes("berserker") && grid.includes("wolfrider")) break;
-    if (!(await placeUnit(alice, grid.indexOf("") === -1 ? 0 : [4, 5, 6, 7, 0, 1, 2, 3].find((c) => !grid[c])!))) await alice.waitForTimeout(1000);
+    const { grid, spellsCast } = await lanes(alice, (l) => ({ grid: l.grid, spellsCast: l.spellsCast }));
+    if (grid.includes("berserker") && spellsCast > 0) break;
+    const cell = grid.indexOf("berserker") === -1 ? 5 : grid.indexOf("berserker");
+    const acted = (spellsCast === 0 && (await castSpell(alice))) || (await lanes(alice, (l, c) => l.levels[c] < 3, cell)) && (await placeUnit(alice, cell));
+    if (!acted) await alice.waitForTimeout(1000);
   }
   await expect.poll(() => lanes(alice, (l) => l.unitCount), { timeout: 30_000 }).toBeGreaterThan(0);
   await alice.waitForTimeout(2500);
   await alice.screenshot({ path: shots("new-1-field") });
 
-  // Cycle the hand by casting cheaper spells until Cataclysm shows up and is affordable.
-  for (let i = 0; i < 60; i++) {
-    const { hand, gold } = await lanes(alice, (l) => ({ hand: l.hand, gold: l.gold }));
-    if (hand.includes("cataclysm") && gold >= CARDS.cataclysm.cost) break;
-    const slot = hand.findIndex((id) => id !== "cataclysm" && CARDS[id]?.cost <= gold);
-    if (slot !== -1 && CARDS[hand[slot]].kind === "spell") await alice.locator(".hand-card").nth(slot).click();
-    else if (slot !== -1) await placeUnit(alice, (await lanes(alice, (l) => l.grid)).indexOf(hand[slot]));
-    await alice.waitForTimeout(1000);
-  }
-  await expect.poll(() => lanes(alice, (l) => l.unitCount), { timeout: 30_000 }).toBeGreaterThan(0);
-  await expect(alice.locator(".hand-card", { hasText: "Cataclysm" }).first()).toContainText("3/3 left");
-  await expect.poll(() => lanes(alice, (l) => l.gold), { timeout: 30_000 }).toBeGreaterThanOrEqual(CARDS.cataclysm.cost);
-  await alice.screenshot({ path: shots("new-2-before-cataclysm") });
-  await alice.locator(".hand-card", { hasText: "Cataclysm" }).first().click();
-  await expect.poll(() => lanes(alice, (l) => l.unitCount), { timeout: 2000, intervals: [50] }).toBe(0);
-  await alice.waitForTimeout(300);
-  await alice.screenshot({ path: shots("new-3-after-cataclysm") });
+  // Cards above tier I stay locked; a Cataclysm in hand also shows its casts left.
+  const hand = await lanes(alice, (l) => l.hand);
+  if (hand.includes("cataclysm")) await expect(alice.locator(".hand-card", { hasText: "Cataclysm" }).first()).toContainText("3/3 left");
+  for (const id of hand) if (CARDS[id].tier > 1) await expect(alice.locator(".hand-card", { hasText: CARDS[id].name }).first()).toContainText("Tier");
+  await alice.screenshot({ path: shots("new-2-hand") });
 });
