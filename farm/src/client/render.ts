@@ -55,6 +55,16 @@ interface Crow {
   life: number;
 }
 
+interface Goat {
+  /** Walks from the pen (sx, sy) to the crop it eats, in view tiles, then back. */
+  sx: number;
+  sy: number;
+  tx: number;
+  ty: number;
+  age: number;
+  life: number;
+}
+
 interface Particle {
   x: number;
   y: number;
@@ -273,7 +283,22 @@ const SILO = art([
   ".QRRddRRr.",
 ]);
 
-const BUILDINGS: Record<string, Art> = { well: WELL, scarecrow: SCARECROW, silo: SILO };
+/** A straw-floored pen with a goat looking over the fence. */
+const GOAT_PEN = art([
+  "...E.E......",
+  "....wwU.....",
+  "...wmwwwwww.",
+  "....wwwwwwwU",
+  "DnnDnwwwwwwD",
+  "DDDDDDDDDDDD",
+  "DnNDnNDnNDnD",
+  "DDDDDDDDDDDD",
+  "DNnDNnDNnDND",
+  "d..d..d..d.d",
+]);
+
+const BUILDINGS: Record<string, Art> = { well: WELL, scarecrow: SCARECROW, silo: SILO, goats: GOAT_PEN };
+
 
 const WEED = art([".B.", "zxz", "xzx"]);
 
@@ -284,6 +309,13 @@ const CROW_ROWS = [
 ];
 const flip = (rows: string[]) => rows.map((r) => [...r].reverse().join(""));
 const CROW = { right: CROW_ROWS.map((r) => art(r, false)), left: CROW_ROWS.map((r) => art(flip(r), false)) };
+
+/** Two walking frames, facing left. */
+const GOAT_ROWS = [
+  ["E.E.......", ".wwU......", "wmwwwwwwU.", ".wwwwwwwwU", "..wwwwwww.", "..U.U..U.U"],
+  ["E.E.......", ".wwU......", "wmwwwwwwU.", ".wwwwwwwwU", "..wwwwwww.", "...U.U.U.."],
+];
+const GOAT = { left: GOAT_ROWS.map((r) => art(r)), right: GOAT_ROWS.map((r) => art(flip(r))) };
 
 // ---------------------------------------------------------------------------
 // Terrain colours.
@@ -333,6 +365,7 @@ export class Renderer {
   private floating: Floater[] = [];
   private flashes: Flash[] = [];
   private crows: Crow[] = [];
+  private goats: Goat[] = [];
   private particles: Particle[] = [];
   private tiles: TileView[] = [];
   private groundKey = "";
@@ -402,6 +435,19 @@ export class Renderer {
         this.flashes.push({ tile: fx.tile, color, age: 0, life: 1 });
         this.floatAt(fx.tile, "Bought out!", color);
         this.burst(fx.tile, [color, PALETTE.white, INK.Y], 20, 60);
+      } else if (fx.type === "outpost") {
+        this.flashes.push({ tile: fx.tile, color, age: 0, life: 1 });
+        this.floatAt(fx.tile, "Outpost!", color);
+        this.burst(fx.tile, [color, PALETTE.white, SOIL.dry[2]], 16, 50);
+      } else if (fx.type === "claim") {
+        this.flashes.push({ tile: fx.tile, color, age: 0, life: 1 });
+        this.floatAt(fx.tile, "Claimed!", color);
+        this.burst(fx.tile, [color, PALETTE.white, INK.Y], 20, 60);
+      } else if (fx.type === "goat") {
+        const from = this.viewXY(fx.from);
+        const to = this.viewXY(fx.tile);
+        this.goats.push({ sx: from.x, sy: from.y, tx: to.x, ty: to.y, age: 0, life: 2.4 });
+        this.floatAt(fx.tile, "Munch!", PALETTE.white, 0.9);
       } else if (fx.type === "weeds") {
         for (const tile of fx.tiles) {
           this.flashes.push({ tile, color: INK.x, age: 0, life: 0.8 });
@@ -789,6 +835,22 @@ export class Renderer {
       drawArt(g, sprite, Math.floor(cx) - 5, Math.floor(cy) - 3, false);
     }
     this.crows = this.crows.filter((c) => c.age < c.life);
+
+    // Goats trot out, munch for a moment and trot home.
+    for (const goat of this.goats) {
+      goat.age += dt;
+      const k = goat.age / goat.life;
+      const out = k < 0.4 ? k / 0.4 : k < 0.6 ? 1 : 1 - (k - 0.6) / 0.4;
+      const gx = FRAME + (goat.sx + (goat.tx - goat.sx) * out + 0.5) * TILE;
+      const gy = FRAME + (goat.sy + (goat.ty - goat.sy) * out + 0.5) * TILE;
+      const heading = k < 0.6 ? goat.tx - goat.sx : goat.sx - goat.tx;
+      const frames = heading > 0 ? GOAT.right : GOAT.left;
+      const sprite = frames[k >= 0.4 && k < 0.6 ? 0 : Math.floor(this.time * 8) % 2];
+      const bob = k >= 0.4 && k < 0.6 ? Math.floor(this.time * 6) % 2 : 0;
+      g.rect(Math.floor(gx) - 5, Math.floor(gy) + 3, 10, 2).fill({ color: 0x000000, alpha: 0.25 });
+      drawArt(g, sprite, Math.floor(gx) - 6, Math.floor(gy) - 4 + bob, false);
+    }
+    this.goats = this.goats.filter((goat) => goat.age < goat.life);
   }
 }
 

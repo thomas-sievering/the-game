@@ -13,6 +13,17 @@ export const START_SIZE = 2;
 export const BARN_CAPACITY = 20;
 
 export const LAND = { base: 20, step: 5, surveyStep: 3, rich: 20, clear: 25 };
+/** Every few seconds each farmer pays tiles² / divisor coins in land tax, so a big farm stops growing for free. */
+export const TAX = { everyTicks: 10 * TICK_RATE, divisor: 20 };
+/** One tile per match can be bought anywhere, not just next to your land, for this percentage of the land price. */
+export const OUTPOST = { percent: 150 };
+/**
+ * A farmer below this percentage of their rival's net worth, and at least minGap short of it, is behind:
+ * sabotage costs less and comeback moves unlock. The gap keeps early-game noise from counting.
+ */
+export const BEHIND = { percent: 75, minGap: 150, discount: 40 };
+/** A land claim buys out any enemy tile, wherever it is, for this percentage of the buyout price. */
+export const CLAIM = { percent: 75, cooldownTicks: 60 * TICK_RATE };
 /** A buyout costs this many times the tile's value; the old owner gets the value back. */
 export const BUYOUT = { factor: 2, fencedFactor: 3, cooldownTicks: 20 * TICK_RATE, protectTicks: 30 * TICK_RATE };
 /** Trade tech: haggling and the guild pay these percentages; wholesale sales lower the price by this many permille per unit. */
@@ -41,8 +52,8 @@ export const CONTRACTS = {
 
 export type Terrain = "grass" | "rich" | "rock" | "pond";
 export type CropId = "wheat" | "carrot" | "pumpkin" | "berries";
-export type BuildingId = "well" | "scarecrow" | "silo";
-export type SabotageId = "crows" | "weeds" | "dump";
+export type BuildingId = "well" | "scarecrow" | "silo" | "goats";
+export type SabotageId = "crows" | "weeds" | "dump" | "rustlers";
 export type BranchId = "growing" | "trade" | "homestead";
 export type TechId = "fertilizer" | "irrigation" | "hybrid" | "haggling" | "guild" | "wholesale" | "survey" | "fences" | "dogs";
 export type Side = 0 | 1;
@@ -76,6 +87,7 @@ export const BUILDINGS: Record<BuildingId, Building> = {
   well: { id: "well", name: "Well", cost: 60, text: "Waters the 8 tiles around it." },
   scarecrow: { id: "scarecrow", name: "Scarecrow", cost: 40, text: "Crows can't land within 2 tiles." },
   silo: { id: "silo", name: "Silo", cost: 80, text: `Barn holds ${BARN_CAPACITY} more crops.` },
+  goats: { id: "goats", name: "Goat pen", cost: 70, text: "Every 30 s its goat eats the nearest enemy crop within 3 tiles." },
 };
 export const BUILDING_IDS = Object.keys(BUILDINGS) as BuildingId[];
 
@@ -84,6 +96,8 @@ export interface Sabotage {
   name: string;
   cost: number;
   cooldownTicks: number;
+  /** Only a farmer who is behind can use it. */
+  behindOnly?: boolean;
   text: string;
 }
 
@@ -91,6 +105,14 @@ export const SABOTAGE: Record<SabotageId, Sabotage> = {
   crows: { id: "crows", name: "Crows", cost: 40, cooldownTicks: 30 * TICK_RATE, text: "Eat 3 enemy crops, ripe ones first. Scarecrows stop them." },
   weeds: { id: "weeds", name: "Weeds", cost: 30, cooldownTicks: 25 * TICK_RATE, text: "A 2×2 enemy patch grows at half speed for 30 s." },
   dump: { id: "dump", name: "Market dump", cost: 20, cooldownTicks: 45 * TICK_RATE, text: "Throw away 3 of a crop to crash its price for 20 s." },
+  rustlers: {
+    id: "rustlers",
+    name: "Rustlers",
+    cost: 40,
+    cooldownTicks: 45 * TICK_RATE,
+    behindOnly: true,
+    text: "Steal 5 of their most valuable stored crops into your barn.",
+  },
 };
 export const SABOTAGE_IDS = Object.keys(SABOTAGE) as SabotageId[];
 
@@ -116,7 +138,7 @@ export const TECH: Record<TechId, Tech> = {
   guild: { id: "guild", name: "Guild", branch: "trade", cost: 90, requires: "haggling", text: "Orders pay you 25% more." },
   wholesale: { id: "wholesale", name: "Wholesale", branch: "trade", cost: 160, requires: "guild", text: "Your sales lower the price half as much." },
   survey: { id: "survey", name: "Surveying", branch: "homestead", cost: 60, text: "Each tile you buy raises your land price by 3, not 5." },
-  fences: { id: "fences", name: "Fences", branch: "homestead", cost: 90, requires: "survey", text: "Buying out your land costs 3× its value, not 2×." },
+  fences: { id: "fences", name: "Fences", branch: "homestead", cost: 90, requires: "survey", text: "Buying out your land costs 3× its value, not 2×, and goats can't get in." },
   dogs: { id: "dogs", name: "Farm dogs", branch: "homestead", cost: 140, requires: "fences", text: "Crows take only 1 of your crops; weeds on your land wear off twice as fast." },
 };
 export const TECH_IDS = Object.keys(TECH) as TechId[];
@@ -129,6 +151,8 @@ const isTech = (id: unknown): id is TechId => typeof id === "string" && (TECH_ID
 export const WEEDS_TICKS = 30 * TICK_RATE;
 export const DUMP = { units: 3, freezeTicks: 20 * TICK_RATE };
 export const CROWS = { count: 3, scarecrowRange: 2 };
+export const RUSTLERS = { count: 5 };
+export const GOATS = { everyTicks: 30 * TICK_RATE, range: 3 };
 
 export interface Tile {
   terrain: Terrain;
@@ -151,8 +175,10 @@ export interface Player {
   barn: Record<CropId, number>;
   /** Tiles bought so far, which raises the price of the next one. */
   bought: number;
-  /** Tick at which each sabotage, and the buyout, can be used again. */
-  ready: Record<SabotageId | "buyout", number>;
+  /** Tick at which each sabotage, the buyout and the land claim can be used again. */
+  ready: Record<SabotageId | "buyout" | "claim", number>;
+  /** Whether this farmer has set up their one outpost. */
+  outpost: boolean;
   tech: Record<TechId, boolean>;
 }
 
@@ -168,6 +194,10 @@ export type Fx =
   | { type: "sell"; side: Side; crop: CropId; count: number; coins: number }
   | { type: "buy"; side: Side; tile: number; cost: number }
   | { type: "buyout"; side: Side; tile: number; cost: number }
+  | { type: "outpost"; side: Side; tile: number; cost: number }
+  | { type: "claim"; side: Side; tile: number; cost: number }
+  | { type: "rustlers"; side: Side; crops: CropId[] }
+  | { type: "goat"; side: Side; from: number; tile: number }
   | { type: "contract"; side: Side; reward: number }
   | { type: "crows"; side: Side; tiles: number[] }
   | { type: "weeds"; side: Side; tiles: number[] }
@@ -223,7 +253,8 @@ export function createFarm({ seed = 1 }: FarmOptions = {}): Farm {
 
 function newPlayer(): Player {
   const tech = Object.fromEntries(TECH_IDS.map((id) => [id, false])) as Record<TechId, boolean>;
-  return { coins: START_COINS, barn: perCrop(0), bought: 0, ready: { crows: 0, weeds: 0, dump: 0, buyout: 0 }, tech };
+  const ready = { crows: 0, weeds: 0, dump: 0, rustlers: 0, buyout: 0, claim: 0 };
+  return { coins: START_COINS, barn: perCrop(0), bought: 0, ready, outpost: false, tech };
 }
 
 function random(farm: Farm): number {
@@ -317,6 +348,24 @@ export function buyoutPrice(farm: Farm, tile: number): number {
   return t.value * (hasTech(farm, t.owner, "fences") ? BUYOUT.fencedFactor : BUYOUT.factor);
 }
 
+export const outpostPrice = (farm: Farm, side: Side, tile: number) => Math.floor((landPrice(farm, side, tile) * OUTPOST.percent) / 100);
+export const claimPrice = (farm: Farm, tile: number) => Math.floor((buyoutPrice(farm, tile) * CLAIM.percent) / 100);
+
+export const tilesOwned = (farm: Farm, side: Side) => farm.tiles.filter((t) => t.owner === side).length;
+
+/** Land tax a farmer with this many tiles pays every TAX.everyTicks. */
+export const landTax = (tiles: number) => Math.floor((tiles * tiles) / TAX.divisor);
+
+/** Whether a net worth is far enough below the rival's to count as behind. */
+export const isBehindWorth = (worth: number, rival: number) => worth * 100 < rival * BEHIND.percent && rival - worth >= BEHIND.minGap;
+
+export function isBehind(farm: Farm, side: Side): boolean {
+  return isBehindWorth(netWorth(farm, side), netWorth(farm, (1 - side) as Side));
+}
+
+/** What a sabotage costs: a farmer who is behind pays less. */
+export const sabotageCost = (cost: number, behind: boolean) => (behind ? Math.floor((cost * (100 - BEHIND.discount)) / 100) : cost);
+
 export function capacity(farm: Farm, side: Side): number {
   const silos = farm.tiles.filter((t) => t.owner === side && t.building === "silo").length;
   return BARN_CAPACITY * (1 + silos);
@@ -387,18 +436,71 @@ export function buy(farm: Farm, side: Side, tile: number): Result {
     farm.events.push({ type: "buy", side, tile, cost });
     return null;
   }
-  if (t.home) return "Starting land can't be bought out";
-  if (t.building) return "Land with a building can't be bought out";
-  if (t.protectedUntil > farm.tick) return "That land was just bought out";
+  const locked = takeable(farm, tile);
+  if (locked) return locked;
   if (player.ready.buyout > farm.tick) return "Buyout is on cooldown";
   const cost = buyoutPrice(farm, tile);
   const paid = pay(player, cost);
   if (paid) return paid;
-  farm.players[t.owner as Side].coins += t.value;
-  // The crop changes hands with the land.
-  Object.assign(t, { owner: side, value: cost, protectedUntil: farm.tick + BUYOUT.protectTicks });
+  takeOver(farm, side, tile, cost);
   player.ready.buyout = farm.tick + BUYOUT.cooldownTicks;
   farm.events.push({ type: "buyout", side, tile, cost });
+  return null;
+}
+
+/** Why an enemy tile can't be bought out, or null. A goat pen can be: it changes hands with the land. */
+function takeable(farm: Farm, tile: number): Result {
+  const t = farm.tiles[tile];
+  if (t.home) return "Starting land can't be bought out";
+  if (t.building && t.building !== "goats") return "Land with a building can't be bought out";
+  if (t.protectedUntil > farm.tick) return "That land was just bought out";
+  return null;
+}
+
+/** Hands an enemy tile to a side, who paid cost for it; the old owner gets what they paid back. */
+function takeOver(farm: Farm, side: Side, tile: number, cost: number) {
+  const t = farm.tiles[tile];
+  farm.players[t.owner as Side].coins += t.value;
+  // The crop, or goat pen, changes hands with the land.
+  Object.assign(t, { owner: side, value: cost, protectedUntil: farm.tick + BUYOUT.protectTicks });
+}
+
+/** Buys your one outpost: a neutral tile anywhere on the board, at a premium. */
+export function outpost(farm: Farm, side: Side, tile: number): Result {
+  const error = check(farm, tile);
+  if (error) return error;
+  const t = farm.tiles[tile];
+  const player = farm.players[side];
+  if (player.outpost) return "You already have an outpost";
+  if (t.owner !== -1) return "An outpost needs neutral land";
+  if (t.terrain === "pond") return "You can't buy a pond";
+  const cost = outpostPrice(farm, side, tile);
+  const paid = pay(player, cost);
+  if (paid) return paid;
+  Object.assign(t, { owner: side, value: cost });
+  player.bought++;
+  player.outpost = true;
+  farm.events.push({ type: "outpost", side, tile, cost });
+  return null;
+}
+
+/** A comeback move: a farmer who is behind buys out any enemy tile, wherever it is, at a discount. */
+export function claim(farm: Farm, side: Side, tile: number): Result {
+  const error = check(farm, tile);
+  if (error) return error;
+  const t = farm.tiles[tile];
+  const player = farm.players[side];
+  if (!isBehind(farm, side)) return "Only a farmer who is behind can claim land";
+  if (player.ready.claim > farm.tick) return "Land claim is on cooldown";
+  if (t.owner !== 1 - side) return "Claim their land";
+  const locked = takeable(farm, tile);
+  if (locked) return locked;
+  const cost = claimPrice(farm, tile);
+  const paid = pay(player, cost);
+  if (paid) return paid;
+  takeOver(farm, side, tile, cost);
+  player.ready.claim = farm.tick + CLAIM.cooldownTicks;
+  farm.events.push({ type: "claim", side, tile, cost });
   return null;
 }
 
@@ -513,9 +615,13 @@ export function sabotage(farm: Farm, side: Side, id: SabotageId, target?: number
   const spec = SABOTAGE[id];
   const player = farm.players[side];
   if (player.ready[id] > farm.tick) return `${spec.name} is on cooldown`;
-  if (player.coins < spec.cost) return `You need ${spec.cost} coins`;
+  const behind = isBehind(farm, side);
+  if (spec.behindOnly && !behind) return `${spec.name} only work when you're behind`;
+  const cost = sabotageCost(spec.cost, behind);
+  if (player.coins < cost) return `You need ${cost} coins`;
   const enemy = (1 - side) as Side;
   let tiles: number[] = [];
+  const stolen: CropId[] = [];
   if (id === "crows") {
     const scarecrows = farm.tiles.flatMap((t, i) => (t.owner === enemy && t.building === "scarecrow" ? [i] : []));
     const targets = farm.tiles.flatMap((t, i) =>
@@ -539,6 +645,20 @@ export function sabotage(farm: Farm, side: Side, id: SabotageId, target?: number
     if (!tiles.length) return "Weeds have to hit enemy land";
     const ticks = farm.players[enemy].tech.dogs ? WEEDS_TICKS / 2 : WEEDS_TICKS;
     for (const tile of tiles) farm.tiles[tile].weedsUntil = farm.tick + ticks;
+  } else if (id === "rustlers") {
+    const loot = farm.players[enemy].barn;
+    if (!barnCount(farm.players[enemy])) return "Their barn is empty";
+    const room = capacity(farm, side) - barnCount(player);
+    if (room <= 0) return "Your barn is full";
+    // The priciest crops first; equal prices keep crop order.
+    const order = [...CROP_IDS].sort((a, b) => price(farm, b) - price(farm, a));
+    for (const crop of order) {
+      while (loot[crop] > 0 && stolen.length < Math.min(RUSTLERS.count, room)) {
+        loot[crop]--;
+        player.barn[crop]++;
+        stolen.push(crop);
+      }
+    }
   } else {
     const crop = target as CropId;
     if (!isCrop(crop)) return "Pick a crop to dump";
@@ -547,9 +667,10 @@ export function sabotage(farm: Farm, side: Side, id: SabotageId, target?: number
     farm.market[crop] = MARKET.floor;
     farm.frozenUntil[crop] = farm.tick + DUMP.freezeTicks;
   }
-  player.coins -= spec.cost;
+  player.coins -= cost;
   player.ready[id] = farm.tick + spec.cooldownTicks;
   if (id === "dump") farm.events.push({ type: "dump", side, crop: target as CropId });
+  else if (id === "rustlers") farm.events.push({ type: "rustlers", side, crops: stolen });
   else farm.events.push({ type: id, side, tiles });
   return null;
 }
@@ -631,6 +752,26 @@ export function forfeit(farm: Farm, side: Side) {
   if (farm.winner === -1) farm.winner = 1 - side;
 }
 
+/** A pen's goat eats the nearest enemy crop in range, ripe ones first; fences keep it out. */
+function goatEats(farm: Farm, pen: number) {
+  const side = farm.tiles[pen].owner as Side;
+  const enemy = (1 - side) as Side;
+  if (farm.players[enemy].tech.fences) return;
+  let best = -1;
+  // Lower is better: every ripe crop ranks before an unripe one, then the nearest; ties keep the lower tile.
+  let bestRank = Infinity;
+  for (let i = 0; i < TILE_COUNT; i++) {
+    const t = farm.tiles[i];
+    const d = distance(pen, i);
+    if (t.owner !== enemy || !t.crop || d > GOATS.range) continue;
+    const rank = (isRipe(t) ? 0 : 10) + d;
+    if (rank < bestRank) [best, bestRank] = [i, rank];
+  }
+  if (best === -1) return;
+  Object.assign(farm.tiles[best], { crop: "", growth: 0 });
+  farm.events.push({ type: "goat", side, from: pen, tile: best });
+}
+
 export function step(farm: Farm) {
   if (farm.winner !== -1) return;
   farm.tick++;
@@ -640,6 +781,15 @@ export function step(farm: Farm) {
   }
   for (const id of CROP_IDS) {
     if (farm.frozenUntil[id] <= farm.tick) farm.market[id] = Math.min(MARKET.full, farm.market[id] + MARKET.recoverPerTick);
+  }
+  if (farm.tick % TAX.everyTicks === 0) {
+    for (const side of [0, 1] as const) {
+      const player = farm.players[side];
+      player.coins -= Math.min(player.coins, landTax(tilesOwned(farm, side)));
+    }
+  }
+  if (farm.tick % GOATS.everyTicks === 0) {
+    for (let i = 0; i < TILE_COUNT; i++) if (farm.tiles[i].building === "goats") goatEats(farm, i);
   }
   farm.contracts = farm.contracts.filter((c) => c.expiresAt > farm.tick);
   if (farm.tick >= farm.nextContractAt) {

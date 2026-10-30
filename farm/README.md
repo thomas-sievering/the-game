@@ -12,7 +12,7 @@ npm run typecheck
 npm run build      # dist/client (static) + dist/server.js
 npm start          # serves the built client and the game server on $PORT (default 2569)
 npm run e2e        # Playwright against BASE_URL (default http://localhost:2569, start the server first)
-npx tsx scripts/balance.ts 5   # greedy bots play full matches; prints net worth and land over time
+npx tsx scripts/balance.ts 20  # greedy bots play full matches; prints net worth, land and how much the early leader snowballs
 ```
 
 ## Layout

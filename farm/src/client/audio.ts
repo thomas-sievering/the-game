@@ -87,6 +87,16 @@ export const sfx = {
   dump() {
     tone(440, 0.4, 0.15, "square", 0, 110);
   },
+  rustlers() {
+    // A whistle, then hooves.
+    tone(1200, 0.12, 0.1, "sine", 0, 1800);
+    tone(1800, 0.14, 0.1, "sine", 0.12, 1100);
+    for (let i = 0; i < 4; i++) tone(140, 0.05, 0.14, "triangle", 0.3 + i * 0.09, 90);
+  },
+  goat() {
+    // A wobbly bleat.
+    for (let i = 0; i < 4; i++) tone(i % 2 ? 470 : 520, 0.07, 0.08, "sawtooth", i * 0.06);
+  },
   research() {
     for (const [i, freq] of [392, 494, 587, 784].entries()) tone(freq, 0.18, 0.12, "sine", i * 0.07);
   },
