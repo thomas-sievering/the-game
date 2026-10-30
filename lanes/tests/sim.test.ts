@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CARDS, STARTER_DECK, deckError, unitCard } from "../src/shared/cards";
+import { CARDS, MAX_LEVEL, STARTER_DECK, deckError, levelStats, unitCard } from "../src/shared/cards";
 import {
   type Battle,
   BASE_HP,
@@ -150,13 +150,44 @@ describe("placement and waves", () => {
     expect(battle.units.filter((u) => u.card === "footman").length).toBeGreaterThanOrEqual(3);
   });
 
-  it("placing on an occupied cell replaces the unit", () => {
+  it("placing a different unit on an occupied cell replaces it at level 1", () => {
     const battle = createBattle();
+    give(battle, 0, "footman");
+    play(battle, 0, 0, 5);
     give(battle, 0, "footman");
     play(battle, 0, 0, 5);
     give(battle, 0, "brute");
     play(battle, 0, 0, 5);
     expect(battle.players[0].grid[5]).toBe("brute");
+    expect(battle.players[0].levels[5]).toBe(1);
+  });
+
+  it("placing the same unit levels it up to the max, then refuses", () => {
+    const battle = createBattle();
+    const player = battle.players[0];
+    for (let level = 1; level <= MAX_LEVEL; level++) {
+      give(battle, 0, "footman");
+      expect(play(battle, 0, 0, 5)).toBeNull();
+      expect(player.levels[5]).toBe(level);
+    }
+    give(battle, 0, "footman");
+    expect(play(battle, 0, 0, 5)).toMatch(/already level/);
+    expect(player.gold).toBe(1000);
+    expect(player.hand[0]).toBe("footman");
+  });
+
+  it("levelled cells spawn stronger units", () => {
+    const battle = createBattle();
+    for (let i = 0; i < 3; i++) {
+      give(battle, 0, "swarm");
+      play(battle, 0, 0, 0);
+    }
+    run(battle, WAVE_TICKS);
+    const card = unitCard("swarm");
+    const stats = levelStats(card, 3);
+    expect(stats.hp).toBeGreaterThan(card.hp);
+    expect(battle.units).toHaveLength(3);
+    for (const u of battle.units) expect(u).toMatchObject({ level: 3, hp: stats.hp, maxHp: stats.hp, damage: stats.damage });
   });
 
   it("swarm spawns three units", () => {
@@ -282,6 +313,57 @@ describe("spells", () => {
     run(fast, 20);
     expect(b.x).toBeCloseTo(a.x * 1.5);
     expect(b.x).toBeGreaterThan(a.x);
+  });
+
+  it("a levelled unit breaches for all the gold put into it and pays a bigger bounty", () => {
+    const battle = createBattle();
+    spawnUnit(battle, 0, "brute", 0, 0, 0, 1, 2).x = FIELD_WIDTH - 1;
+    run(battle, 5);
+    expect(battle.players[1].baseHp).toBe(BASE_HP - unitCard("brute").cost * 2);
+
+    const fight = createBattle();
+    const victim = spawnUnit(fight, 1, "footman", 0, 0, 0, 1, 3);
+    victim.hp = 0;
+    const gold = fight.players[0].gold;
+    step(fight);
+    expect(fight.players[0].gold).toBe(gold + unitCard("footman").bounty * 3);
+  });
+
+  it("meteor hits the biggest enemy group and spares a lone unit", () => {
+    const battle = createBattle();
+    const lone = spawnUnit(battle, 1, "brute", 0);
+    lone.x = 900;
+    const group = [0, 1, 2].map(() => spawnUnit(battle, 1, "brute", 2));
+    group.forEach((u, i) => (u.x = 500 + i * 20));
+    give(battle, 0, "meteor");
+    expect(play(battle, 0, 0)).toBeNull();
+    for (const u of group) expect(u.hp).toBeLessThan(u.maxHp);
+    expect(lone.hp).toBe(lone.maxHp);
+  });
+
+  it("fury doubles damage for a while", () => {
+    const hitFor = (fury: boolean) => {
+      const battle = createBattle();
+      const attacker = spawnUnit(battle, 0, "footman", 1);
+      const target = spawnUnit(battle, 1, "brute", 1);
+      attacker.x = 600;
+      Object.assign(target, { x: 620, frozenTicks: 1e6 });
+      if (fury) {
+        give(battle, 0, "fury");
+        play(battle, 0, 0);
+      }
+      step(battle);
+      return target.maxHp - target.hp;
+    };
+    expect(hitFor(false)).toBe(unitCard("footman").damage);
+    expect(hitFor(true)).toBe(unitCard("footman").damage * 2);
+  });
+
+  it("muster spawns a unit in every lane", () => {
+    const battle = createBattle();
+    give(battle, 0, "muster");
+    expect(play(battle, 0, 0)).toBeNull();
+    expect(battle.units.map((u) => [u.side, u.card, u.y])).toEqual([0, 1, 2].map((row) => [0, "footman", rowCenter(row)]));
   });
 
   it("frost freezes enemies and mend heals allies", () => {

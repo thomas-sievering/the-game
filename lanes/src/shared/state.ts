@@ -14,6 +14,8 @@ export const PlayerState = schema(
     hand: t.array("string").view(),
     /** Card id per build cell, "" when empty. */
     grid: t.array("string").view(),
+    /** Level per build cell, 0 when empty. */
+    levels: t.array("number").view(),
     /** Tick at which each spell can be cast again. */
     ready: t.map("number").view(),
   },
@@ -35,12 +37,14 @@ export const UnitState = schema(
     id: t.number(),
     side: t.uint8(),
     card: t.string(),
+    level: t.uint8().default(1),
     x: t.float64(),
     y: t.float64(),
     hp: t.number(),
     maxHp: t.number(),
     hasted: t.boolean().default(false),
     frozen: t.boolean().default(false),
+    fury: t.boolean().default(false),
   },
   "UnitState",
 );

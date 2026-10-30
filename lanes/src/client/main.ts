@@ -1,6 +1,6 @@
 import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
-import { CARDS, type Card, DECK_SIZE, MAX_COPIES, type Role, STARTER_DECK, deckError } from "../shared/cards";
+import { CARDS, type Card, DECK_SIZE, LEVEL_SCALE, MAX_COPIES, MAX_LEVEL, type Role, STARTER_DECK, deckError } from "../shared/cards";
 import { BASE_HP, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, SHRINE, TICK_RATE, WAVE_TICKS } from "../shared/sim";
 import { LanesState, type PlayerState } from "../shared/state";
 import { isMuted, sfx, toggleMute } from "./audio";
@@ -23,7 +23,7 @@ let deck = loadDeck();
 /** Deck being edited while the deck screen is open, else null. */
 let draft: string[] | null = null;
 /** What the last render saw, so sounds play only on changes. */
-let heard = { tick: -1, grid: "", income: 0, phase: "" };
+let heard = { tick: -1, grid: "", levels: [] as number[], income: 0, phase: "" };
 
 function show(screen: "home" | "deck" | "lobby" | "game") {
   $("home").classList.toggle("hidden", screen !== "home");
@@ -178,7 +178,7 @@ function render() {
     renderHand(self, s.tick);
   }
   playStateSounds(s, self);
-  renderer.setGrid([...(self?.grid ?? [])]);
+  renderer.setGrid([...(self?.grid ?? [])], [...(self?.levels ?? [])]);
   renderer.setShrine(s.shrineOwner, s.shrineControl);
   renderer.setUnits([...s.units.values()]);
 
@@ -194,6 +194,7 @@ function render() {
 /** Sounds for state changes that have no fx event: waves, placements, investing and the result. */
 function playStateSounds(s: LanesState, self: PlayerState | undefined) {
   const grid = (self?.grid ?? []).join(",");
+  const levels = [...(self?.levels ?? [])];
   const income = self?.income ?? 0;
   // The first render of a match (or after rejoining) only records the state.
   if (heard.tick !== -1 && s.tick >= heard.tick) {
@@ -206,7 +207,9 @@ function playStateSounds(s: LanesState, self: PlayerState | undefined) {
       }
     }
     if (s.phase === "playing" && heard.phase === "playing") {
-      if (grid !== heard.grid) sfx.place();
+      const levelled = levels.findIndex((level, cell) => level > 1 && level > (heard.levels[cell] ?? 0) && grid === heard.grid);
+      if (levelled !== -1) sfx.levelUp(levels[levelled]);
+      else if (grid !== heard.grid) sfx.place();
       if (income > heard.income) sfx.invest();
     }
     if (s.phase === "finished" && heard.phase !== "finished") {
@@ -215,7 +218,7 @@ function playStateSounds(s: LanesState, self: PlayerState | undefined) {
       else sfx.wave();
     }
   }
-  heard = { tick: s.tick, grid, income, phase: s.phase };
+  heard = { tick: s.tick, grid, levels, income, phase: s.phase };
 }
 
 function playFxSounds(events: Fx[]) {
@@ -272,7 +275,7 @@ function cardHtml(card: Card, slot: number | null, cooldown: number): string {
   );
 }
 
-const SPELL_ICONS: Record<string, string> = { rally: "»", lightning: "ϟ", mend: "✚", frost: "❄" };
+const SPELL_ICONS: Record<string, string> = { rally: "»", lightning: "ϟ", mend: "✚", frost: "❄", meteor: "☄", fury: "‼", muster: "⚑" };
 
 /** Same silhouettes as on the battlefield. */
 function roleIcon(role: Role): string {
@@ -290,7 +293,11 @@ function roleIcon(role: Role): string {
 function select(slot: number) {
   selected = slot;
   renderer.placing = slot === -1 ? "" : (me()?.hand[slot] ?? "");
-  $("hint").textContent = slot === -1 ? "" : "Click a pad on your grid to place it · Esc to cancel";
+  const percent = Math.round((LEVEL_SCALE[1] - 1) * 100);
+  $("hint").textContent =
+    slot === -1
+      ? ""
+      : `Click a pad to place it · on the same unit it levels up (+${percent}% HP & damage per level, max ${MAX_LEVEL}) · Esc to cancel`;
   for (let i = 0; i < HAND_SIZE; i++) $("hand").children[i]?.classList.toggle("selected", i === selected);
 }
 
@@ -344,7 +351,7 @@ async function enter(join: () => Promise<Room<any, LanesState>>) {
   });
   room.onLeave(() => {
     room = null;
-    heard = { tick: -1, grid: "", income: 0, phase: "" };
+    heard = { tick: -1, grid: "", levels: [], income: 0, phase: "" };
     select(-1);
     render();
   });
@@ -419,6 +426,9 @@ main();
   },
   get grid() {
     return [...(me()?.grid ?? [])];
+  },
+  get levels() {
+    return [...(me()?.levels ?? [])];
   },
   get side() {
     return me()?.side ?? -1;

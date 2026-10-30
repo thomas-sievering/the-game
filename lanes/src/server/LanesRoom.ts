@@ -143,6 +143,7 @@ export class LanesRoom extends Room<{ state: LanesState }> {
       view.investCost = player.investCost;
       syncArray(view.hand, player.hand);
       syncArray(view.grid, player.grid);
+      syncArray(view.levels, player.levels);
       for (const [card, tick] of Object.entries(player.ready)) if (view.ready.get(card) !== tick) view.ready.set(card, tick);
     }
     if (battle.events.length) this.broadcast("fx", battle.events.splice(0));
@@ -151,9 +152,9 @@ export class LanesRoom extends Room<{ state: LanesState }> {
       const key = String(unit.id);
       alive.add(key);
       const view = this.state.units.get(key);
-      const fields = { x: unit.x, y: unit.y, hp: unit.hp, hasted: unit.hasteTicks > 0, frozen: unit.frozenTicks > 0 };
+      const fields = { x: unit.x, y: unit.y, hp: unit.hp, hasted: unit.hasteTicks > 0, frozen: unit.frozenTicks > 0, fury: unit.furyTicks > 0 };
       if (view) Object.assign(view, fields);
-      else this.state.units.set(key, new UnitState({ id: unit.id, side: unit.side, card: unit.card, maxHp: unit.maxHp, ...fields }));
+      else this.state.units.set(key, new UnitState({ id: unit.id, side: unit.side, card: unit.card, level: unit.level, maxHp: unit.maxHp, ...fields }));
     }
     for (const key of [...this.state.units.keys()]) if (!alive.has(key)) this.state.units.delete(key);
   }
@@ -169,7 +170,7 @@ export class LanesRoom extends Room<{ state: LanesState }> {
   }
 }
 
-function syncArray(view: ArraySchema<string>, values: string[]) {
+function syncArray<T extends string | number>(view: ArraySchema<T>, values: T[]) {
   for (let i = 0; i < values.length; i++) {
     if (i >= view.length) view.push(values[i]);
     else if (view[i] !== values[i]) view[i] = values[i];

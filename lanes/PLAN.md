@@ -12,9 +12,10 @@ A browser-based 1v1 deckbuilding auto battler in the spirit of StarCraft II's "D
 - **Spells/abilities:** cards that are activated, not aimed, and resolve automatically (e.g. "all my units +50% speed for 5 s", "lightning hits the 3 frontmost enemies").
 - **Deckbuilding:** persistent collection. Everyone starts with a starter collection, earns cards by playing, and builds a deck from their collection before a match.
 - **Accounts:** pick a nickname on first visit; a secret token in localStorage identifies the player. A recovery code moves the account to another browser. No passwords or email.
-- **Unlocks:** earned by playing (finishing/winning matches → currency → new cards). No card levels or stat upgrades.
+- **Unlocks:** earned by playing (finishing/winning matches → currency → new cards). No permanent card levels or stat upgrades in the collection (in-match unit levels are separate, see below).
 - **Storage:** SQLite file on nexus next to the service.
 - **Spectators:** up to 8 per room, on top of the 2 players. Joining a full lobby or a running match makes you a spectator. In the lobby the host can move anyone, themselves included, between players and spectators. The host may be a spectator. Spectators see the battlefield and both bases but not hands, gold or build grids.
+- **Unit levels (in match):** placed units have levels 1–3. Playing a unit card on a cell that holds the same unit levels it up; a different unit replaces it at level 1. The battlefield shows the level: level 2 has a silver outline and two chevrons, level 3 a gold outline, glow and three chevrons, and higher levels are slightly bigger.
 - **Tech:** same stack as minigolf: TypeScript everywhere, authoritative Colyseus server, PixiJS client, Vite, shared deterministic simulation module, Vitest + Playwright.
 - **Repo & deploy:** `lanes/` folder in this repo next to `minigolf/`; GitHub Actions (`lanes-ci.yml`, `lanes-deploy.yml`) → `/etc/nexus/nexus-deploy lanes` → systemd service + Caddy vhost in `D:\projects\nexus\server-config`, like golf.
 
@@ -31,7 +32,7 @@ A browser-based 1v1 deckbuilding auto battler in the spirit of StarCraft II's "D
 ## Out of scope (for now)
 
 - 2v2/teams, co-op, bots/AI opponent, matchmaking/ranked.
-- Card levels, trading, real money, cosmetics.
+- Permanent card levels, trading, real money, cosmetics.
 - Mobile, gamepads, downloadable builds.
 - Aimed/targeted abilities, direct unit control.
 
@@ -41,10 +42,10 @@ A browser-based 1v1 deckbuilding auto battler in the spirit of StarCraft II's "D
 - **Win:** destroy the enemy base (1500 HP). A unit that reaches the enemy base breaches it once for damage equal to its card cost and is spent, so each wave is its own push instead of a growing death ball. Bases have a short-range turret. If neither base falls by 10:00, the base with more HP left wins; equal HP is a draw.
 - **Shrine:** a neutral capture point sits in the middle of the centre lane. Units standing in it with no enemy units there capture it in 3 s (a held shrine first turns neutral). The owner earns +2 gold per second.
 - **Waves:** every 20 s. Each placed unit spawns once per wave, and placements are permanent for the match (Desert Strike rules).
-- **Economy:** gold trickles in each second, plus a bounty per kill. Placing a unit costs gold, and so does a spell. Spells also have a cooldown. A player can invest gold for +1 income per second, and each investment costs more. Placing a unit on an occupied cell replaces it.
+- **Economy:** gold trickles in each second, plus a bounty per kill. Placing a unit costs gold, and so does a spell. Spells also have a cooldown. A player can invest gold for +1 income per second, and each investment costs more. Each unit level adds +50% HP and damage (level 3 = double); a levelled unit breaches for, and pays a bounty of, its card value times its level. A cell at level 3 refuses more copies.
 - **Deck rules:** exactly 10 cards, at most 3 copies of a card, at least one unit. Until unlocks exist every card is open to everyone; the deck is built on its own screen (from the start screen or the lobby), saved in the browser and sent to the server, which falls back to the starter deck if it's invalid.
 - **Hand:** your deck is 10 cards; you hold a hand of 4 drawn from it. Playing a card draws the next one, and the deck reshuffles when empty.
-- **Content for v1:** about 16 cards (about 12 units: melee, ranged, tank, fast, splash, healer; about 4 spells). The starter collection covers 10 of them, so 6 are earned.
+- **Content for v1:** 19 cards (12 units: melee, ranged, tank, fast, splash, healer; 7 spells: Rally, Lightning, Mend, Frost, Meteor, Fury, Muster). The starter collection covers 10 of them, so 6 are earned.
 - **Rewards:** a fixed amount of coins per finished match (more for a win, nothing for leaving early). Coins buy a choice of 1 of 3 unowned cards.
 - **Networking:** the server runs the sim at a fixed 20 ticks/s and syncs unit state. The client interpolates and does not predict. The sim is deterministic so tests and replays are exact.
 - **Rooms:** create → 4-letter code → both pick a deck → host starts. A disconnected player has 60 s to rejoin, otherwise they forfeit.

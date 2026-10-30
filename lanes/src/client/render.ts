@@ -1,5 +1,5 @@
 import { Application, Container, Graphics, Text } from "pixi.js";
-import { CARDS, SIZE } from "../shared/cards";
+import { CARDS, MAX_LEVEL, SIZE } from "../shared/cards";
 import { COLS, FIELD_HEIGHT, FIELD_WIDTH, type Fx, ROW_HEIGHT, ROWS, SHRINE } from "../shared/sim";
 
 export const PALETTE = {
@@ -20,19 +20,29 @@ export const PALETTE = {
   haste: 0xffd166,
   lightning: 0xfff3a0,
   shrine: 0xc9b6ff,
+  fury: 0xff5a3c,
+  meteor: 0xff9a3c,
+  /** Rank colours for levels 2 and 3. */
+  silver: 0xdfe6f2,
+  gold: 0xffc93c,
   white: 0xffffff,
 };
+
+/** Units grow a little with each level, on top of their rank marks. */
+const LEVEL_SIZE = [1, 1.15, 1.32];
 
 export interface UnitView {
   id: number;
   side: number;
   card: string;
+  level: number;
   x: number;
   y: number;
   hp: number;
   maxHp: number;
   hasted: boolean;
   frozen: boolean;
+  fury: boolean;
 }
 
 /** What the renderer remembers about a unit between frames. */
@@ -97,6 +107,9 @@ export class Renderer {
   private floating: Floater[] = [];
   private latest: UnitView[] = [];
   private myGrid: string[] = [];
+  private myLevels: number[] = [];
+  /** Seconds left of the flash on a pad that just levelled up, per cell. */
+  private padFlash = new Array<number>(ROWS * COLS).fill(0);
   private shrine = { owner: -1, control: 0 };
   private hoverCell = -1;
   private shake = 0;
@@ -149,8 +162,12 @@ export class Renderer {
     this.latest = units;
   }
 
-  setGrid(grid: string[]): void {
+  setGrid(grid: string[], levels: number[]): void {
+    for (let cell = 0; cell < grid.length; cell++) {
+      if ((levels[cell] ?? 0) > (this.myLevels[cell] ?? 0) && this.myGrid.length) this.padFlash[cell] = 0.6;
+    }
     this.myGrid = grid;
+    this.myLevels = levels;
   }
 
   setShrine(owner: number, control: number): void {
@@ -219,13 +236,13 @@ export class Renderer {
       this.origin.y + (Math.random() - 0.5) * this.shake,
     );
     this.drawField(dt);
-    this.drawGrid();
+    this.drawGrid(dt);
     this.drawUnits(dt);
     this.drawEffects(dt);
     this.updateFloaters(dt);
   }
 
-  private drawGrid(): void {
+  private drawGrid(dt: number): void {
     const g = this.grid.clear();
     const pulse = 0.55 + 0.45 * Math.sin(this.time * 6);
     for (let cell = 0; cell < ROWS * COLS; cell++) {
@@ -237,12 +254,24 @@ export class Renderer {
       else g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 12).stroke({ color: PALETTE.padBorder, width: 1 });
 
       const card = this.myGrid[cell] ?? "";
+      const level = card ? (this.myLevels[cell] ?? 1) : 0;
+      // Hovering the same unit previews its next level instead of a replacement.
+      const upgrade = hover && this.placing === card;
+      const shownLevel = upgrade ? Math.min(MAX_LEVEL, level + 1) : hover ? 1 : level;
       const cx = x + PAD_SIZE / 2;
       const cy = y + PAD_SIZE / 2 - 8;
-      if (hover) drawShape(g, this.placing, cx, cy, PALETTE.me, 1.15, 0.5);
+      if (this.padFlash[cell] > 0) {
+        g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 12).fill({ color: rankColor(level), alpha: this.padFlash[cell] * 0.6 });
+        this.padFlash[cell] = Math.max(0, this.padFlash[cell] - dt);
+      }
+      if (hover) drawShape(g, this.placing, cx, cy, PALETTE.me, 1.15, upgrade ? 0.8 : 0.5);
       else if (card) drawShape(g, card, cx, cy, PALETTE.me, 1.15);
       else g.rect(cx - 6, cy + 7, 12, 2).fill({ color: PALETTE.padBorder }).rect(cx - 1, cy + 2, 2, 12).fill({ color: PALETTE.padBorder });
-      const name = hover ? (CARDS[this.placing]?.name ?? "") : (CARDS[card]?.name ?? "");
+      if (shownLevel > 1) drawRank(g, cx, y + 12, shownLevel, hover ? 0.7 : 1);
+      if (shownLevel > 1 && !hover) g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 12).stroke({ color: rankColor(shownLevel), width: 2, alpha: 0.8 });
+      const cardName = CARDS[hover ? this.placing : card]?.name ?? "";
+      // Owned pads show their level with chevrons and border; the label only spells it out while previewing an upgrade.
+      const name = !upgrade ? cardName : level >= MAX_LEVEL ? "Max level" : `Level ${level + 1}`;
       if (this.padLabels[cell].text !== name) this.padLabels[cell].text = name;
       this.padLabels[cell].alpha = hover ? 0.6 : 1;
     }
@@ -273,9 +302,13 @@ export class Renderer {
       const reach = Math.sin((Math.PI * s.lunge) / LUNGE_SECONDS) * 9;
       const x = s.x + s.lungeX * reach;
       const y = s.y + s.lungeY * reach;
-      const scale = Math.min(1, 0.4 + (0.6 * s.age) / SPAWN_SECONDS);
+      const scale = Math.min(1, 0.4 + (0.6 * s.age) / SPAWN_SECONDS) * (LEVEL_SIZE[u.level - 1] ?? 1);
       const r = SIZE[roleOf(u.card)] * scale;
       const color = this.color(u.side);
+
+      // Level 3 units carry a soft gold glow under them so they stand out in a crowd.
+      if (u.level >= 3) g.circle(x, y, r + 9 + Math.sin(this.time * 5) * 1.5).fill({ color: PALETTE.gold, alpha: 0.18 });
+      if (u.fury) g.circle(x, y, r + 6).stroke({ color: PALETTE.fury, width: 3, alpha: 0.6 + 0.3 * Math.sin(this.time * 14) });
 
       if (u.hasted) {
         const back = u.side === this.mySide ? -1 : 1;
@@ -283,8 +316,9 @@ export class Renderer {
           g.moveTo(x + back * (r + 4), y + off).lineTo(x + back * (r + 14), y + off).stroke({ color: PALETTE.haste, width: 2, alpha: 0.8 });
         }
       }
-      drawShape(g, u.card, x, y, u.frozen ? PALETTE.frost : color, scale, 1, true);
+      drawShape(g, u.card, x, y, u.frozen ? PALETTE.frost : color, scale, 1, u.level > 1 ? rankColor(u.level) : PALETTE.outline);
       if (s.flash > 0) drawShape(g, u.card, x, y, PALETTE.white, scale, s.flash / FLASH_SECONDS);
+      if (u.level > 1) drawRank(g, x, y + r + 10, u.level, 1, 1.3);
       if (u.hp < u.maxHp) {
         const w = Math.max(24, r * 2);
         g.rect(x - w / 2 - 1, y - r - 11, w + 2, 6).fill(PALETTE.hpBack);
@@ -375,6 +409,29 @@ export class Renderer {
       } else if (fx.card === "frost") {
         g.circle(x, y, 10 + 26 * t).fill({ color: PALETTE.frost, alpha: 0.35 * alpha });
         g.circle(x, y, 10 + 26 * t).stroke({ color: PALETTE.white, width: 2, alpha });
+      } else if (fx.card === "meteor") {
+        // Falls from the upper right for the first 30%, then a wide blast.
+        const radius = CARDS.meteor.kind === "spell" && CARDS.meteor.effect.type === "meteor" ? CARDS.meteor.effect.radius : 80;
+        if (t < 0.3) {
+          const k = t / 0.3;
+          const [sx, sy] = [x + 220 * (1 - k), y - 320 * (1 - k)];
+          g.moveTo(sx + 50, sy - 70).lineTo(sx, sy).stroke({ color: PALETTE.meteor, width: 8, alpha: 0.7 });
+          g.circle(sx, sy, 12).fill(PALETTE.white).circle(sx, sy, 16).stroke({ color: PALETTE.meteor, width: 4 });
+        } else {
+          const k = (t - 0.3) / 0.7;
+          g.circle(x, y, radius * (0.6 + 0.4 * k)).fill({ color: PALETTE.meteor, alpha: 0.45 * (1 - k) });
+          g.circle(x, y, radius * (0.6 + 0.5 * k)).stroke({ color: 0xffe0a0, width: 5 * (1 - k) + 1, alpha: 1 - k });
+          g.circle(x, y, 18 * (1 - k)).fill({ color: PALETTE.white, alpha: 1 - k });
+        }
+      } else if (fx.card === "fury") {
+        g.circle(x, y, 10 + 22 * t).stroke({ color: PALETTE.fury, width: 5 * alpha + 1, alpha });
+        for (let i = 0; i < 3; i++) {
+          const fx0 = x + (i - 1) * 8;
+          g.poly([fx0 - 4, y - 14 - 22 * t, fx0, y - 24 - 22 * t, fx0 + 4, y - 14 - 22 * t]).fill({ color: PALETTE.fury, alpha });
+        }
+      } else if (fx.card === "muster") {
+        g.rect(x - 2, y - 40 * (1 - t) - 30, 4, 30).fill({ color: PALETTE.white, alpha });
+        g.circle(x, y, 14 + 30 * t).stroke({ color: PALETTE.me, width: 4 * alpha + 1, alpha });
       } else if (fx.card === "mend") {
         const s = 10 + 8 * t;
         g.rect(x - s, y - 3 - 20 * t, s * 2, 6).fill({ color: PALETTE.heal, alpha });
@@ -448,7 +505,8 @@ export class Renderer {
     if (k > 0 && k < 1) {
       const toward = control > 0 ? 0 : 1;
       const start = -Math.PI / 2;
-      g.arc(x, SHRINE.y, r, start, start + k * Math.PI * 2).stroke({ color: this.color(toward), width: 5, alpha: 0.9 });
+      // Start a fresh path at the top of the ring; otherwise the arc joins up with the last point drawn.
+      g.moveTo(x, SHRINE.y - r).arc(x, SHRINE.y, r, start, start + k * Math.PI * 2).stroke({ color: this.color(toward), width: 5, alpha: 0.9 });
     }
     const s = 14 + Math.sin(this.time * 3) * 1.5;
     g.poly([x, SHRINE.y - s, x + s * 0.7, SHRINE.y, x, SHRINE.y + s, x - s * 0.7, SHRINE.y])
@@ -472,13 +530,31 @@ function padTop(cell: number): number {
   return Math.floor(cell / COLS) * ROW_HEIGHT + (ROW_HEIGHT - PAD_SIZE) / 2;
 }
 
+function rankColor(level: number): number {
+  return level >= 3 ? PALETTE.gold : level === 2 ? PALETTE.silver : PALETTE.padBorder;
+}
+
+/** Rank chevrons centred at (x, y): two silver for level 2, three gold for level 3. Level 1 has none. */
+function drawRank(g: Graphics, x: number, y: number, level: number, alpha = 1, size = 1): void {
+  const color = rankColor(level);
+  const w = 7 * size;
+  const gap = 5 * size;
+  const total = (level - 1) * gap;
+  for (let i = 0; i < level; i++) {
+    const cy = y - total / 2 + i * gap;
+    const h = 2 * size;
+    g.moveTo(x - w, cy - h).lineTo(x, cy + h).lineTo(x + w, cy - h).stroke({ color: PALETTE.outline, width: 5 * size, alpha: alpha * 0.8, cap: "round", join: "round" });
+    g.moveTo(x - w, cy - h).lineTo(x, cy + h).lineTo(x + w, cy - h).stroke({ color, width: 2.5 * size, alpha, cap: "round", join: "round" });
+  }
+}
+
 function roleOf(cardId: string) {
   const card = CARDS[cardId];
   return card?.kind === "unit" ? card.role : "melee";
 }
 
 /** Each role gets its own silhouette so units read at a glance. */
-function drawShape(g: Graphics, cardId: string, x: number, y: number, color: number, scale = 1, alpha = 1, outline = false): void {
+function drawShape(g: Graphics, cardId: string, x: number, y: number, color: number, scale = 1, alpha = 1, outline?: number): void {
   const card = CARDS[cardId];
   if (card?.kind !== "unit") return;
   const r = SIZE[card.role] * scale;
@@ -510,7 +586,8 @@ function drawShape(g: Graphics, cardId: string, x: number, y: number, color: num
       break;
   }
   g.fill(fill);
-  if (outline) g.stroke({ color: PALETTE.outline, width: 2.5, alpha: 0.8 });
+  // Levelled units get a thicker outline in their rank colour.
+  if (outline !== undefined) g.stroke({ color: outline, width: outline === PALETTE.outline ? 2.5 : 3.5, alpha: outline === PALETTE.outline ? 0.8 : 1 });
   // A heavier card gets a ring so a Golem doesn't look like a Brute.
   if (card.cost >= 55) g.circle(x, y, r + 4).stroke({ color, width: 2, alpha: 0.7 * alpha });
 }
