@@ -7,6 +7,7 @@ type Farm = {
   coins: number;
   barn: Record<string, number>;
   contracts: { id: number; items: { crop: string; count: number }[] }[];
+  tech: string[];
   tiles: { owner: number; terrain: string; crop: string; growth: number; weeds: boolean }[];
   winner: number;
   spectating: boolean;
@@ -88,6 +89,20 @@ test("two farmers buy land, grow, sell, fill an order and sabotage", async ({ br
   await alice.locator('.market-row[data-crop="wheat"] .sell').click();
   await expect.poll(async () => (await farm(alice, (f) => f.barn)).wheat).toBe(0);
 
+  // Alice researches Haggling from her tech tree; Bob looks at her tree through her name badge.
+  await alice.keyboard.press("t");
+  await alice.locator('.tech-node[data-tech="haggling"] .research').click();
+  await expect.poll(() => farm(alice, (f) => f.tech)).toEqual(["haggling"]);
+  await expect(alice.locator('.tech-node[data-tech="haggling"]')).toHaveClass(/done/);
+  await alice.screenshot({ path: shots("3b-tech") });
+  await alice.keyboard.press("Escape");
+  await expect(alice.locator("#tech")).toBeHidden();
+  await bob.locator('.farmer[data-who="them"] .tech-badge').click();
+  await expect(bob.locator("#tech-title")).toHaveText("Alice's tech tree");
+  await expect(bob.locator('.tech-node[data-tech="haggling"]')).toHaveClass(/done/);
+  await expect(bob.locator(".tech-node .research:visible")).toHaveCount(0);
+  await bob.keyboard.press("Escape");
+
   // Bob sows weeds on Alice's start and she pulls one.
   await bob.keyboard.press("w");
   await clickTile(bob, tileAt(0, 0));
@@ -144,4 +159,12 @@ test("the host moves themselves to spectators and starts a match they watch", as
   expect(await farm(carol, (f) => f.spectating)).toBe(false);
   await expect(alice.locator("#spectating")).toBeVisible();
   await alice.screenshot({ path: shots("spectate-2-watching") });
+
+  // The spectator opens Carol's tech tree from her name badge and switches to Bob's; neither has research buttons.
+  await alice.locator('.farmer[data-who="me"] .tech-badge').click();
+  await expect(alice.locator("#tech-title")).toHaveText("Carol's tech tree");
+  await alice.locator('#tech-tabs button[data-side="1"]').click();
+  await expect(alice.locator("#tech-title")).toHaveText("Bob's tech tree");
+  await expect(alice.locator(".tech-node .research:visible")).toHaveCount(0);
+  await alice.screenshot({ path: shots("spectate-3-tech") });
 });

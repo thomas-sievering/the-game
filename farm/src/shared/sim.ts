@@ -12,14 +12,16 @@ export const START_COINS = 60;
 export const START_SIZE = 2;
 export const BARN_CAPACITY = 20;
 
-export const LAND = { base: 20, step: 5, rich: 20, clear: 25 };
+export const LAND = { base: 20, step: 5, surveyStep: 3, rich: 20, clear: 25 };
 /** A buyout costs this many times the tile's value; the old owner gets the value back. */
-export const BUYOUT = { factor: 2, cooldownTicks: 20 * TICK_RATE, protectTicks: 30 * TICK_RATE };
+export const BUYOUT = { factor: 2, fencedFactor: 3, cooldownTicks: 20 * TICK_RATE, protectTicks: 30 * TICK_RATE };
+/** Trade tech: haggling and the guild pay these percentages; wholesale sales lower the price by this many permille per unit. */
+export const TRADE = { haggle: 110, guild: 125, wholesaleDrop: 20 };
 
-/** Growth points a crop gains per tick on wet grass; rich soil adds half, dry soil and weeds halve it. */
-const GROWTH_WET = 8;
+/** Growth points a crop gains per tick on wet grass; rich soil adds half, fertilizer a quarter, dry soil and weeds halve it. */
+const GROWTH_WET = 16;
 /** A crop needs growTicks × GROWTH_FULL points, so on wet grass it ripens in exactly growTicks. */
-const GROWTH_FULL = 8;
+const GROWTH_FULL = 16;
 
 export const MARKET = {
   /** Price factor in permille of a crop's base price. */
@@ -41,6 +43,8 @@ export type Terrain = "grass" | "rich" | "rock" | "pond";
 export type CropId = "wheat" | "carrot" | "pumpkin" | "berries";
 export type BuildingId = "well" | "scarecrow" | "silo";
 export type SabotageId = "crows" | "weeds" | "dump";
+export type BranchId = "growing" | "trade" | "homestead";
+export type TechId = "fertilizer" | "irrigation" | "hybrid" | "haggling" | "guild" | "wholesale" | "survey" | "fences" | "dogs";
 export type Side = 0 | 1;
 
 export interface Crop {
@@ -90,10 +94,38 @@ export const SABOTAGE: Record<SabotageId, Sabotage> = {
 };
 export const SABOTAGE_IDS = Object.keys(SABOTAGE) as SabotageId[];
 
+export interface Tech {
+  id: TechId;
+  name: string;
+  branch: BranchId;
+  cost: number;
+  /** The tech above it in its branch, which has to be researched first. */
+  requires?: TechId;
+  text: string;
+}
+
+/** Three branches of three steps: grow more, sell better, keep your land. Each step needs the one above it. */
+export const BRANCHES: Record<BranchId, string> = { growing: "Growing", trade: "Trade", homestead: "Homestead" };
+export const BRANCH_IDS = Object.keys(BRANCHES) as BranchId[];
+
+export const TECH: Record<TechId, Tech> = {
+  fertilizer: { id: "fertilizer", name: "Fertilizer", branch: "growing", cost: 60, text: "Your crops grow 25% faster." },
+  irrigation: { id: "irrigation", name: "Irrigation", branch: "growing", cost: 100, requires: "fertilizer", text: "Your wells water 2 tiles out (5×5)." },
+  hybrid: { id: "hybrid", name: "Hybrid seeds", branch: "growing", cost: 200, requires: "irrigation", text: "Harvests from your rich soil give 2 crops." },
+  haggling: { id: "haggling", name: "Haggling", branch: "trade", cost: 50, text: "You sell for 10% more." },
+  guild: { id: "guild", name: "Guild", branch: "trade", cost: 90, requires: "haggling", text: "Orders pay you 25% more." },
+  wholesale: { id: "wholesale", name: "Wholesale", branch: "trade", cost: 160, requires: "guild", text: "Your sales lower the price half as much." },
+  survey: { id: "survey", name: "Surveying", branch: "homestead", cost: 60, text: "Each tile you buy raises your land price by 3, not 5." },
+  fences: { id: "fences", name: "Fences", branch: "homestead", cost: 90, requires: "survey", text: "Buying out your land costs 3× its value, not 2×." },
+  dogs: { id: "dogs", name: "Farm dogs", branch: "homestead", cost: 140, requires: "fences", text: "Crows take only 1 of your crops; weeds on your land wear off twice as fast." },
+};
+export const TECH_IDS = Object.keys(TECH) as TechId[];
+
 // Ids arrive from clients: only exact known strings count, never arrays or inherited keys like "constructor".
 const isCrop = (id: unknown): id is CropId => typeof id === "string" && (CROP_IDS as string[]).includes(id);
 const isBuilding = (id: unknown): id is BuildingId => typeof id === "string" && (BUILDING_IDS as string[]).includes(id);
 const isSabotage = (id: unknown): id is SabotageId => typeof id === "string" && (SABOTAGE_IDS as string[]).includes(id);
+const isTech = (id: unknown): id is TechId => typeof id === "string" && (TECH_IDS as string[]).includes(id);
 export const WEEDS_TICKS = 30 * TICK_RATE;
 export const DUMP = { units: 3, freezeTicks: 20 * TICK_RATE };
 export const CROWS = { count: 3, scarecrowRange: 2 };
@@ -121,6 +153,7 @@ export interface Player {
   bought: number;
   /** Tick at which each sabotage, and the buyout, can be used again. */
   ready: Record<SabotageId | "buyout", number>;
+  tech: Record<TechId, boolean>;
 }
 
 export interface Contract {
@@ -138,7 +171,8 @@ export type Fx =
   | { type: "contract"; side: Side; reward: number }
   | { type: "crows"; side: Side; tiles: number[] }
   | { type: "weeds"; side: Side; tiles: number[] }
-  | { type: "dump"; side: Side; crop: CropId };
+  | { type: "dump"; side: Side; crop: CropId }
+  | { type: "research"; side: Side; tech: TechId };
 
 export interface Farm {
   tick: number;
@@ -188,7 +222,8 @@ export function createFarm({ seed = 1 }: FarmOptions = {}): Farm {
 }
 
 function newPlayer(): Player {
-  return { coins: START_COINS, barn: perCrop(0), bought: 0, ready: { crows: 0, weeds: 0, dump: 0, buyout: 0 } };
+  const tech = Object.fromEntries(TECH_IDS.map((id) => [id, false])) as Record<TechId, boolean>;
+  return { coins: START_COINS, barn: perCrop(0), bought: 0, ready: { crows: 0, weeds: 0, dump: 0, buyout: 0 }, tech };
 }
 
 function random(farm: Farm): number {
@@ -249,9 +284,23 @@ function neighbours(tile: number, diagonal: boolean): number[] {
 
 const distance = (a: number, b: number) => Math.max(Math.abs(tileX(a) - tileX(b)), Math.abs(tileY(a) - tileY(b)));
 
-/** A tile is wet next to a pond or a well. */
+/** Whether the owner of a tile has researched a tech; neutral land has none. */
+function hasTech(farm: Farm, owner: number, id: TechId): boolean {
+  return owner !== -1 && farm.players[owner as Side].tech[id];
+}
+
+/** A tile is wet next to a pond or a well, or within 2 of a well whose owner has irrigation. */
 export function isWet(farm: Farm, tile: number): boolean {
-  return neighbours(tile, true).some((n) => farm.tiles[n].terrain === "pond" || farm.tiles[n].building === "well");
+  if (neighbours(tile, true).some((n) => farm.tiles[n].terrain === "pond" || farm.tiles[n].building === "well")) return true;
+  const x = tileX(tile);
+  const y = tileY(tile);
+  for (let ny = Math.max(0, y - 2); ny <= Math.min(ROWS - 1, y + 2); ny++) {
+    for (let nx = Math.max(0, x - 2); nx <= Math.min(COLS - 1, x + 2); nx++) {
+      const t = farm.tiles[tileAt(nx, ny)];
+      if (t.building === "well" && hasTech(farm, t.owner, "irrigation")) return true;
+    }
+  }
+  return false;
 }
 
 function bordersOwn(farm: Farm, side: Side, tile: number): boolean {
@@ -259,11 +308,13 @@ function bordersOwn(farm: Farm, side: Side, tile: number): boolean {
 }
 
 export function landPrice(farm: Farm, side: Side, tile: number): number {
-  return LAND.base + farm.players[side].bought * LAND.step + (farm.tiles[tile].terrain === "rich" ? LAND.rich : 0);
+  const step = farm.players[side].tech.survey ? LAND.surveyStep : LAND.step;
+  return LAND.base + farm.players[side].bought * step + (farm.tiles[tile].terrain === "rich" ? LAND.rich : 0);
 }
 
 export function buyoutPrice(farm: Farm, tile: number): number {
-  return farm.tiles[tile].value * BUYOUT.factor;
+  const t = farm.tiles[tile];
+  return t.value * (hasTech(farm, t.owner, "fences") ? BUYOUT.fencedFactor : BUYOUT.factor);
 }
 
 export function capacity(farm: Farm, side: Side): number {
@@ -277,6 +328,17 @@ export function barnCount(player: Player): number {
 
 export function price(farm: Farm, crop: CropId): number {
   return Math.max(1, Math.floor((CROPS[crop].price * farm.market[crop]) / MARKET.full));
+}
+
+/** What one unit sells for to this player: haggling adds 10%. */
+export function sellPrice(farm: Farm, side: Side, crop: CropId): number {
+  const base = price(farm, crop);
+  return farm.players[side].tech.haggling ? Math.floor((base * TRADE.haggle) / 100) : base;
+}
+
+/** What an order pays this player: the guild adds 25%. */
+export function contractReward(farm: Farm, side: Side, contract: Contract): number {
+  return farm.players[side].tech.guild ? Math.floor((contract.reward * TRADE.guild) / 100) : contract.reward;
 }
 
 export function isRipe(tile: Tile): boolean {
@@ -373,9 +435,11 @@ export function harvest(farm: Farm, side: Side, tile: number): Result {
   const t = farm.tiles[tile];
   if (!isRipe(t)) return "Nothing ripe there";
   const player = farm.players[side];
-  if (barnCount(player) >= capacity(farm, side)) return "Your barn is full";
+  const room = capacity(farm, side) - barnCount(player);
+  if (room <= 0) return "Your barn is full";
   const crop = t.crop as CropId;
-  player.barn[crop]++;
+  // Hybrid seeds double the harvest on rich soil, as far as the barn has room.
+  player.barn[crop] += player.tech.hybrid && t.terrain === "rich" ? Math.min(2, room) : 1;
   const { regrowTicks, growTicks } = CROPS[crop];
   if (regrowTicks) t.growth = (growTicks - regrowTicks) * GROWTH_FULL;
   else Object.assign(t, { crop: "", growth: 0 });
@@ -416,9 +480,10 @@ export function sell(farm: Farm, side: Side, crop: CropId, count: number): Resul
   const n = Math.min(Math.floor(count), player.barn[crop]);
   if (!(n > 0)) return "You have none to sell";
   let coins = 0;
+  const drop = player.tech.wholesale ? TRADE.wholesaleDrop : MARKET.dropPerUnit;
   for (let i = 0; i < n; i++) {
-    coins += price(farm, crop);
-    farm.market[crop] = Math.max(MARKET.floor, farm.market[crop] - MARKET.dropPerUnit);
+    coins += sellPrice(farm, side, crop);
+    farm.market[crop] = Math.max(MARKET.floor, farm.market[crop] - drop);
   }
   player.barn[crop] -= n;
   player.coins += coins;
@@ -434,9 +499,10 @@ export function fill(farm: Farm, side: Side, contractId: number): Result {
   const player = farm.players[side];
   if (contract.items.some((item) => player.barn[item.crop] < item.count)) return "You don't have the goods";
   for (const item of contract.items) player.barn[item.crop] -= item.count;
-  player.coins += contract.reward;
+  const reward = contractReward(farm, side, contract);
+  player.coins += reward;
   farm.contracts.splice(index, 1);
-  farm.events.push({ type: "contract", side, reward: contract.reward });
+  farm.events.push({ type: "contract", side, reward });
   return null;
 }
 
@@ -458,10 +524,11 @@ export function sabotage(farm: Farm, side: Side, id: SabotageId, target?: number
     if (!targets.length) return "No enemy crops the crows can reach";
     const ripe = targets.filter((i) => isRipe(farm.tiles[i]));
     const pool = ripe.length ? ripe : targets;
-    while (tiles.length < CROWS.count && pool.length) tiles.push(pool.splice(random(farm) % pool.length, 1)[0]);
+    const count = farm.players[enemy].tech.dogs ? 1 : CROWS.count;
+    while (tiles.length < count && pool.length) tiles.push(pool.splice(random(farm) % pool.length, 1)[0]);
     // Top up with growing crops when there are fewer than 3 ripe ones.
     const growing = targets.filter((i) => !tiles.includes(i));
-    while (tiles.length < CROWS.count && growing.length) tiles.push(growing.splice(random(farm) % growing.length, 1)[0]);
+    while (tiles.length < count && growing.length) tiles.push(growing.splice(random(farm) % growing.length, 1)[0]);
     for (const tile of tiles) Object.assign(farm.tiles[tile], { crop: "", growth: 0 });
   } else if (id === "weeds") {
     const corner = Number(target);
@@ -470,7 +537,8 @@ export function sabotage(farm: Farm, side: Side, id: SabotageId, target?: number
     const y = Math.min(tileY(corner), ROWS - 2);
     tiles = [tileAt(x, y), tileAt(x + 1, y), tileAt(x, y + 1), tileAt(x + 1, y + 1)].filter((i) => farm.tiles[i].owner === enemy);
     if (!tiles.length) return "Weeds have to hit enemy land";
-    for (const tile of tiles) farm.tiles[tile].weedsUntil = farm.tick + WEEDS_TICKS;
+    const ticks = farm.players[enemy].tech.dogs ? WEEDS_TICKS / 2 : WEEDS_TICKS;
+    for (const tile of tiles) farm.tiles[tile].weedsUntil = farm.tick + ticks;
   } else {
     const crop = target as CropId;
     if (!isCrop(crop)) return "Pick a crop to dump";
@@ -486,11 +554,27 @@ export function sabotage(farm: Farm, side: Side, id: SabotageId, target?: number
   return null;
 }
 
+/** Researches a tech for coins once the one above it in its branch is done. */
+export function research(farm: Farm, side: Side, id: TechId): Result {
+  if (farm.winner !== -1) return "The match is over";
+  if (!isTech(id)) return "Unknown tech";
+  const tech = TECH[id];
+  const player = farm.players[side];
+  if (player.tech[id]) return "You already know that";
+  if (tech.requires && !player.tech[tech.requires]) return `Research ${TECH[tech.requires].name} first`;
+  const paid = pay(player, tech.cost);
+  if (paid) return paid;
+  player.tech[id] = true;
+  farm.events.push({ type: "research", side, tech: id });
+  return null;
+}
+
 /** Growth points per tick for a crop on this tile. */
 export function growthRate(farm: Farm, tile: number): number {
   const t = farm.tiles[tile];
   let rate = GROWTH_WET;
   if (t.terrain === "rich") rate += GROWTH_WET / 2;
+  if (hasTech(farm, t.owner, "fertilizer")) rate += GROWTH_WET / 4;
   if (!isWet(farm, tile)) rate /= 2;
   if (t.weedsUntil > farm.tick) rate /= 2;
   return rate;
@@ -525,6 +609,8 @@ export function netWorth(farm: Farm, side: Side): number {
   const player = farm.players[side];
   let worth = player.coins;
   for (const id of CROP_IDS) worth += player.barn[id] * price(farm, id);
+  // Research counts at half its cost, like buildings.
+  for (const id of TECH_IDS) if (player.tech[id]) worth += TECH[id].cost / 2;
   for (const t of farm.tiles) {
     if (t.owner !== side) continue;
     worth += t.value;

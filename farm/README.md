@@ -17,7 +17,7 @@ npx tsx scripts/balance.ts 5   # greedy bots play full matches; prints net worth
 
 ## Layout
 
-- `src/shared/sim.ts` – deterministic farm simulation: map, land, crops, market, orders, sabotage, net worth.
+- `src/shared/sim.ts` – deterministic farm simulation: map, land, crops, market, orders, sabotage, tech tree, net worth.
 - `src/shared/state.ts` – Colyseus schema synced to clients.
 - `src/server/FarmRoom.ts` – room codes, lobby, rejoin, runs the sim at 10 ticks/s.
 - `src/client/` – PixiJS board, DOM panel and synthesized sounds.

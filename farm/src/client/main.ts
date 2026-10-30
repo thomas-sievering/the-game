@@ -1,6 +1,8 @@
 import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
 import {
+  BRANCHES,
+  BRANCH_IDS,
   BUILDINGS,
   BUILDING_IDS,
   type BuildingId,
@@ -13,11 +15,16 @@ import {
   DUMP,
   type Fx,
   LAND,
+  MARKET,
   MATCH_TICKS,
   ROWS,
   SABOTAGE,
   type SabotageId,
+  TECH,
+  TECH_IDS,
   TICK_RATE,
+  TRADE,
+  type TechId,
   tileX,
   tileY,
 } from "../shared/sim";
@@ -49,6 +56,8 @@ let toastTimer = 0;
 let history: Record<string, number[]> = {};
 let lastSample = -1;
 let contractKey = "";
+/** Whose tech tree is open, by side, or -1 when it's closed. */
+let techSide = -1;
 
 function show(screen: "home" | "lobby" | "game") {
   $("home").classList.toggle("hidden", screen !== "home");
@@ -103,6 +112,10 @@ function render() {
     const player = bySide(el.dataset.who === "me" ? mySide : 1 - mySide);
     el.querySelector(".farmer-name")!.textContent = `${player?.name ?? "?"}${player && !player.connected ? " · away" : ""}`;
     el.querySelector(".farmer-worth")!.textContent = `${player?.netWorth ?? 0} worth`;
+    const badge = el.querySelector<HTMLButtonElement>(".tech-badge")!;
+    badge.dataset.side = String(player?.side ?? -1);
+    badge.textContent = `🔬 ${player ? techCount(player) : 0}/${TECH_IDS.length}`;
+    badge.classList.toggle("open", !!player && techSide === player.side);
   }
   $("match-time").textContent = clock(Math.max(0, MATCH_TICKS - s.tick));
 
@@ -114,7 +127,11 @@ function render() {
     renderMarket(s, self);
     renderContracts(s, self);
     renderSabotage(s, self);
+    const open = $("tech-open");
+    open.textContent = `🔬 Tech tree · ${techCount(self)}/${TECH_IDS.length} (T)`;
+    open.classList.toggle("ready", TECH_IDS.some((id) => canResearch(self, id) && self.coins >= TECH[id].cost));
   }
+  renderTech(s, self);
   renderer.setTiles([...s.tiles]);
   updateHint();
 
@@ -131,6 +148,50 @@ function render() {
     $("home-again").onclick = () => void room?.leave();
     aim(false);
   }
+}
+
+const has = (player: PlayerState | undefined, id: TechId) => !!player?.tech.get(id);
+const techCount = (player: PlayerState) => TECH_IDS.filter((id) => has(player, id)).length;
+/** Not researched yet, and the tech above it in its branch is. */
+const canResearch = (player: PlayerState, id: TechId) => !has(player, id) && (!TECH[id].requires || has(player, TECH[id].requires));
+
+/** Opens a farmer's tech tree, or closes it when it's already open or side is -1. */
+function openTech(side: number) {
+  techSide = techSide === side || side === -1 ? -1 : side;
+  if (room?.state) render();
+}
+
+function renderTech(s: FarmState, self: PlayerState | undefined) {
+  const player = [...s.players].find((p) => p.side === techSide);
+  $("tech").classList.toggle("hidden", !player);
+  if (!player) return;
+  const mine = player === self;
+  const playing = s.phase === "playing";
+  $("tech-title").textContent = mine ? "Your tech tree" : `${player.name}'s tech tree`;
+  for (const tab of $("tech-tabs").children as HTMLCollectionOf<HTMLButtonElement>) {
+    const side = Number(tab.dataset.side);
+    const owner = [...s.players].find((p) => p.side === side);
+    tab.textContent = `${owner && owner === self ? "You" : (owner?.name ?? "?")} · ${owner ? techCount(owner) : 0}/${TECH_IDS.length}`;
+    tab.classList.toggle("selected", side === techSide);
+    tab.classList.toggle("enemy", side !== renderer.mySide);
+  }
+  for (const node of $("tech-tree").querySelectorAll<HTMLElement>(".tech-node")) {
+    const id = node.dataset.tech as TechId;
+    const { cost, requires } = TECH[id];
+    const done = has(player, id);
+    const open = canResearch(player, id);
+    node.classList.toggle("done", done);
+    node.classList.toggle("locked", !done && !open);
+    const button = node.querySelector<HTMLButtonElement>("button")!;
+    button.classList.toggle("hidden", !mine || !open || !playing);
+    button.disabled = player.coins < cost;
+    node.querySelector(".tech-state")!.textContent = done
+      ? "✓ Researched"
+      : mine && open && playing
+        ? ""
+        : `${open ? "Not yet" : `Needs ${TECH[requires!].name}`} · ${cost} coins`;
+  }
+  $("tech-note").textContent = `${mine ? "Each step needs the one above it." : `${player.name} has ${player.coins} coins.`} Research counts at half its cost toward net worth.`;
 }
 
 function barnCount(player: PlayerState): number {
@@ -182,20 +243,22 @@ function renderMarket(s: FarmState, self: PlayerState) {
     const sell = row.querySelector<HTMLButtonElement>("button.sell")!;
     sell.disabled = stock === 0;
     sell.textContent = stock ? `Sell ${stock}` : "Sell";
-    sell.title = stock ? `Sell all ${stock} for about ${estimate(price, CROPS[crop].price, stock)} coins` : "";
+    sell.title = stock ? `Sell all ${stock} for about ${estimate(price, CROPS[crop].price, stock, self)} coins` : "";
     const dump = row.querySelector<HTMLButtonElement>("button.dump")!;
     dump.disabled = stock < DUMP.units || dumpReady > 0 || self.coins < SABOTAGE.dump.cost;
     dump.title = `${SABOTAGE.dump.text} Costs ${SABOTAGE.dump.cost} coins.${dumpReady > 0 ? ` Ready in ${Math.ceil(dumpReady / TICK_RATE)} s.` : ""}`;
   }
 }
 
-/** What selling n units at the current price brings in, as the sim prices each unit. */
-function estimate(price: number, base: number, n: number): number {
-  let factor = (price * 1000) / base;
+/** What selling n units at the current price brings in, as the sim prices each unit for this player's tech. */
+function estimate(price: number, base: number, n: number, self: PlayerState): number {
+  let factor = (price * MARKET.full) / base;
+  const drop = has(self, "wholesale") ? TRADE.wholesaleDrop : MARKET.dropPerUnit;
   let total = 0;
   for (let i = 0; i < n; i++) {
-    total += Math.max(1, Math.floor((base * factor) / 1000));
-    factor = Math.max(250, factor - 40);
+    const unit = Math.max(1, Math.floor((base * factor) / MARKET.full));
+    total += has(self, "haggling") ? Math.floor((unit * TRADE.haggle) / 100) : unit;
+    factor = Math.max(MARKET.floor, factor - drop);
   }
   return total;
 }
@@ -228,6 +291,7 @@ function renderContracts(s: FarmState, self: PlayerState) {
       })
       .join(" ");
     el.querySelector<HTMLButtonElement>(".deliver")!.disabled = !ready;
+    el.querySelector(".reward")!.textContent = String(has(self, "guild") ? Math.floor((contract.reward * TRADE.guild) / 100) : contract.reward);
     el.querySelector(".left")!.textContent = `${Math.max(0, Math.ceil((contract.expiresAt - s.tick) / TICK_RATE))} s`;
   }
 }
@@ -280,13 +344,14 @@ function actionFor(index: number): Action | null {
   }
   if (t.terrain === "pond" || !bordersMine(index, self.side)) return null;
   if (t.owner === -1) {
-    const price = LAND.base + self.bought * LAND.step + (t.terrain === "rich" ? LAND.rich : 0);
+    const price = LAND.base + self.bought * (has(self, "survey") ? LAND.surveyStep : LAND.step) + (t.terrain === "rich" ? LAND.rich : 0);
     return { type: "buy", text: `Buy this ${t.terrain === "rich" ? "rich soil" : t.terrain} for ${price} coins` };
   }
   if (t.home || t.building || t.guarded) return null;
   const wait = Math.max(0, (self.ready.get("buyout") ?? 0) - s.tick);
   const note = wait ? ` · ready in ${Math.ceil(wait / TICK_RATE)} s` : "";
-  return { type: "buy", text: `Buy out for ${t.value * BUYOUT.factor} coins (they get ${t.value} back)${note}` };
+  const fenced = has([...s.players].find((p) => p.side === t.owner), "fences");
+  return { type: "buy", text: `Buy out for ${t.value * (fenced ? BUYOUT.fencedFactor : BUYOUT.factor)} coins (they get ${t.value} back)${note}` };
 }
 
 function describe(index: number): string {
@@ -354,6 +419,10 @@ function onFx(events: Fx[]) {
     } else if (fx.type === "crows") sfx.crows();
     else if (fx.type === "weeds") sfx.weeds();
     else if (fx.type === "dump") sfx.dump();
+    else if (fx.type === "research") {
+      sfx.research();
+      if (!mine) toast(`${[...room!.state.players].find((p) => p.side === fx.side)?.name ?? "They"} researched ${TECH[fx.tech].name}`);
+    }
   }
 }
 
@@ -386,6 +455,7 @@ async function enter(join: () => Promise<Room<any, FarmState>>) {
   history = {};
   lastSample = -1;
   contractKey = "";
+  techSide = -1;
   delete $("result").dataset.shown;
   room.onStateChange(render);
   room.onMessage("fx", onFx);
@@ -439,6 +509,28 @@ function buildPanel() {
     $("sabotage").appendChild(button);
   }
   $("sabotage").classList.add("sabotage");
+
+  $("tech-tabs").innerHTML = [0, 1].map((side) => `<button data-side="${side}"></button>`).join("");
+  for (const tab of $("tech-tabs").children as HTMLCollectionOf<HTMLButtonElement>) tab.onclick = () => openTech(Number(tab.dataset.side));
+  $("tech-tree").innerHTML = BRANCH_IDS.map(
+    (branch) =>
+      `<div class="tech-branch"><h2>${BRANCHES[branch]}</h2>` +
+      TECH_IDS.filter((id) => TECH[id].branch === branch)
+        .map(
+          (id) =>
+            `<div class="tech-node" data-tech="${id}"><div class="tech-name">${TECH[id].name}</div>` +
+            `<div class="tech-text">${TECH[id].text}</div><div class="tech-state"></div>` +
+            `<button class="research">Research · ${TECH[id].cost}</button></div>`,
+        )
+        .join("") +
+      "</div>",
+  ).join("");
+  for (const node of $("tech-tree").querySelectorAll<HTMLElement>(".tech-node")) {
+    node.querySelector<HTMLButtonElement>("button")!.onclick = () => room?.send("research", { id: node.dataset.tech });
+  }
+  $("tech-close").onclick = () => openTech(-1);
+  $("tech-open").onclick = () => openTech(me()?.side ?? 0);
+  for (const badge of document.querySelectorAll<HTMLButtonElement>(".tech-badge")) badge.onclick = () => openTech(Number(badge.dataset.side));
 }
 
 function main() {
@@ -457,7 +549,11 @@ function main() {
     muteLabel();
   };
   window.addEventListener("keydown", (e) => {
-    if (room?.state.phase !== "playing" || e.target instanceof HTMLInputElement) return;
+    if (!room || room.state.phase === "lobby" || e.target instanceof HTMLInputElement) return;
+    // Anyone, spectators included, can open the tech trees, even after the match.
+    if (e.key.toLowerCase() === "t") return openTech(techSide === -1 ? (me()?.side ?? 0) : -1);
+    if (e.key === "Escape" && techSide !== -1) return openTech(-1);
+    if (room.state.phase !== "playing") return;
     const n = Number(e.key);
     if (n >= 1 && n <= TOOLS.length) selectTool(TOOLS[n - 1]);
     else if (e.key === "Escape") aim(false);
@@ -518,6 +614,9 @@ main();
   },
   get tiles() {
     return [...(room?.state.tiles ?? [])].map((t) => ({ owner: t.owner, terrain: t.terrain, crop: t.crop, growth: t.growth, weeds: t.weeds }));
+  },
+  get tech() {
+    return TECH_IDS.filter((id) => has(me(), id));
   },
   get winner() {
     return room?.state.winner ?? -1;

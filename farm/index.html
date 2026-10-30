@@ -35,9 +35,9 @@
 
     <div id="hud" class="hidden">
       <div class="top">
-        <div class="farmer" data-who="me"><span class="farmer-name"></span><span class="farmer-worth"></span></div>
+        <div class="farmer" data-who="me"><span class="farmer-name"></span><button class="tech-badge" title="Tech tree"></button><span class="farmer-worth"></span></div>
         <div class="clock"><div id="match-time"></div><div id="spectating" class="muted hidden">Spectating</div></div>
-        <div class="farmer" data-who="them"><span class="farmer-name"></span><span class="farmer-worth"></span></div>
+        <div class="farmer" data-who="them"><span class="farmer-name"></span><button class="tech-badge" title="Tech tree"></button><span class="farmer-worth"></span></div>
       </div>
 
       <aside id="panel">
@@ -53,6 +53,10 @@
           <h2>Orders</h2>
           <div id="contracts"></div>
         </section>
+        <section>
+          <h2>Research</h2>
+          <button id="tech-open" class="tech-open"></button>
+        </section>
         <section id="sabotage-box">
           <h2>Sabotage</h2>
           <div id="sabotage"></div>
@@ -62,6 +66,15 @@
 
       <div id="tools" class="tools"></div>
       <div id="hint" class="hint"></div>
+      <div id="tech" class="tech card hidden">
+        <div class="tech-head">
+          <h1 id="tech-title">Tech tree</h1>
+          <div id="tech-tabs" class="tech-tabs"></div>
+          <button id="tech-close" class="tech-close" title="Close (Esc)">✕</button>
+        </div>
+        <div id="tech-tree" class="tech-tree"></div>
+        <p id="tech-note" class="muted"></p>
+      </div>
       <div id="toast" class="toast hidden"></div>
       <div id="result" class="result card hidden"></div>
       <button id="mute" class="mute" title="Sound (M)"></button>

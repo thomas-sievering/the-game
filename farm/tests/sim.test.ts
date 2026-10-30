@@ -14,6 +14,7 @@ import {
   MATCH_TICKS,
   SABOTAGE,
   START_COINS,
+  TECH,
   TICK_RATE,
   TILE_COUNT,
   WEEDS_TICKS,
@@ -33,6 +34,7 @@ import {
   netWorth,
   plant,
   price,
+  research,
   sabotage,
   sell,
   step,
@@ -391,6 +393,126 @@ describe("sabotage", () => {
     expect(farm.market.pumpkin).toBe(MARKET.floor);
     run(farm, 2);
     expect(farm.market.pumpkin).toBeGreaterThan(MARKET.floor);
+  });
+});
+
+describe("tech tree", () => {
+  /** Researches a tech and everything above it in its branch. */
+  const learn = (farm: Farm, side: 0 | 1, id: keyof typeof TECH) => {
+    const requires = TECH[id].requires;
+    if (requires) learn(farm, side, requires);
+    expect(research(farm, side, id)).toBeNull();
+  };
+
+  it("costs coins, needs the step above it and can't be repeated", () => {
+    const farm = plainFarm();
+    expect(research(farm, 0, "irrigation")).toMatch(/Fertilizer first/);
+    expect(research(farm, 0, "nope" as any)).toMatch(/Unknown/);
+    farm.players[0].coins = TECH.fertilizer.cost - 1;
+    expect(research(farm, 0, "fertilizer")).toMatch(/need/);
+    farm.players[0].coins = TECH.fertilizer.cost;
+    expect(research(farm, 0, "fertilizer")).toBeNull();
+    expect(farm.players[0].coins).toBe(0);
+    expect(farm.players[0].tech.fertilizer).toBe(true);
+    expect(farm.players[1].tech.fertilizer).toBe(false);
+    expect(research(farm, 0, "fertilizer")).toMatch(/already/);
+    expect(farm.events.at(-1)).toEqual({ type: "research", side: 0, tech: "fertilizer" });
+  });
+
+  it("counts toward net worth at half its cost", () => {
+    const farm = plainFarm();
+    farm.players[0].coins = TECH.haggling.cost;
+    const before = netWorth(farm, 0);
+    research(farm, 0, "haggling");
+    expect(netWorth(farm, 0)).toBe(before - TECH.haggling.cost / 2);
+  });
+
+  it("fertilizer grows crops 25% faster", () => {
+    const farm = rich(plainFarm());
+    for (const pond of [tileAt(2, 1), mirror(tileAt(2, 1))]) farm.tiles[pond].terrain = "pond";
+    learn(farm, 0, "fertilizer");
+    plant(farm, 0, tileAt(1, 1), "wheat");
+    plant(farm, 1, mirror(tileAt(1, 1)), "wheat");
+    run(farm, (CROPS.wheat.growTicks * 4) / 5);
+    expect(isRipe(farm.tiles[tileAt(1, 1)])).toBe(true);
+    expect(isRipe(farm.tiles[mirror(tileAt(1, 1))])).toBe(false);
+  });
+
+  it("irrigation makes your wells water 2 tiles out", () => {
+    const farm = rich(plainFarm());
+    for (const x of [2, 3]) own(farm, 0, tileAt(x, 0));
+    build(farm, 0, tileAt(0, 0), "well");
+    expect(isWet(farm, tileAt(2, 0))).toBe(false);
+    learn(farm, 0, "irrigation");
+    expect(isWet(farm, tileAt(2, 0))).toBe(true);
+    expect(isWet(farm, tileAt(3, 0))).toBe(false);
+  });
+
+  it("hybrid seeds give 2 crops per harvest on rich soil while the barn has room", () => {
+    const farm = rich(plainFarm());
+    learn(farm, 0, "hybrid");
+    const tiles = [tileAt(0, 0), tileAt(1, 0), tileAt(0, 1)];
+    for (const tile of tiles.slice(0, 2)) farm.tiles[tile].terrain = "rich";
+    for (const tile of tiles) plant(farm, 0, tile, "wheat");
+    run(farm, CROPS.wheat.growTicks * 2);
+    harvest(farm, 0, tiles[2]);
+    expect(farm.players[0].barn.wheat).toBe(1);
+    harvest(farm, 0, tiles[0]);
+    expect(farm.players[0].barn.wheat).toBe(3);
+    farm.players[0].barn.carrot = BARN_CAPACITY - 4;
+    harvest(farm, 0, tiles[1]);
+    expect(farm.players[0].barn.wheat).toBe(4);
+  });
+
+  it("haggling sells for 10% more and wholesale lowers the price half as much", () => {
+    const farm = plainFarm();
+    for (const side of [0, 1] as const) farm.players[side].barn.pumpkin = 1;
+    learn(rich(farm), 0, "wholesale");
+    sell(farm, 0, "pumpkin", 1);
+    expect(farm.market.pumpkin).toBe(MARKET.full - MARKET.dropPerUnit / 2);
+    farm.market.pumpkin = MARKET.full;
+    const coins = farm.players[0].coins;
+    farm.players[0].barn.pumpkin = 1;
+    sell(farm, 0, "pumpkin", 1);
+    expect(farm.players[0].coins - coins).toBe(Math.floor((CROPS.pumpkin.price * 110) / 100));
+  });
+
+  it("the guild pays 25% more for orders", () => {
+    const farm = rich(plainFarm());
+    learn(farm, 0, "guild");
+    const order = farm.contracts[0];
+    farm.players[0].barn.wheat = 2;
+    const coins = farm.players[0].coins;
+    fill(farm, 0, order.id);
+    expect(farm.players[0].coins - coins).toBe(Math.floor((order.reward * 125) / 100));
+  });
+
+  it("surveying makes land rise in price more slowly", () => {
+    const farm = rich(plainFarm());
+    farm.players[0].bought = 10;
+    const tile = tileAt(2, 0);
+    expect(landPrice(farm, 0, tile)).toBe(LAND.base + 10 * LAND.step);
+    learn(farm, 0, "survey");
+    expect(landPrice(farm, 0, tile)).toBe(LAND.base + 10 * LAND.surveyStep);
+  });
+
+  it("fences make your land three times as dear to buy out", () => {
+    const farm = rich(plainFarm());
+    own(farm, 0, tileAt(2, 0), 30);
+    expect(buyoutPrice(farm, tileAt(2, 0))).toBe(60);
+    learn(farm, 0, "fences");
+    expect(buyoutPrice(farm, tileAt(2, 0))).toBe(90);
+  });
+
+  it("farm dogs let crows take only 1 crop and weeds wear off twice as fast", () => {
+    const farm = rich(plainFarm());
+    learn(farm, 0, "dogs");
+    const tiles = [tileAt(0, 0), tileAt(1, 0), tileAt(0, 1), tileAt(1, 1)];
+    for (const tile of tiles) plant(farm, 0, tile, "wheat");
+    sabotage(farm, 1, "crows");
+    expect(tiles.filter((t) => farm.tiles[t].crop === "")).toHaveLength(1);
+    sabotage(farm, 1, "weeds", tileAt(0, 0));
+    expect(farm.tiles[tileAt(0, 0)].weedsUntil).toBe(farm.tick + WEEDS_TICKS / 2);
   });
 });
 
