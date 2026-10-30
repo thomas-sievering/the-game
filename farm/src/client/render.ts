@@ -88,6 +88,8 @@ export class Renderer {
   canAct: (tile: number) => boolean = () => false;
   onTile: (tile: number) => void = () => {};
   onHover: (tile: number) => void = () => {};
+  /** Tiles to tint while hovering, e.g. what a well would water or a scarecrow would guard. */
+  preview: { tiles: number[]; color: number } | null = null;
 
   async init(parent: HTMLElement): Promise<void> {
     await this.app.init({
@@ -234,6 +236,13 @@ export class Renderer {
           t.terrain === "rich" ? (t.wet ? PALETTE.soilRichWet : PALETTE.soilRich) : t.wet ? PALETTE.soilWet : PALETTE.soil,
         );
         for (let row = 0; row < 3; row++) g.rect(px + 8, py + 12 + row * 11, TILE - 16, 2).fill({ color: 0x000000, alpha: 0.12 });
+        // Cracks mark dry soil, where crops grow at half speed.
+        if (!t.wet && !t.building) {
+          g.moveTo(px + 9, py + 9).lineTo(px + 15, py + 15).lineTo(px + 13, py + 21);
+          g.moveTo(px + 15, py + 15).lineTo(px + 21, py + 13);
+          g.moveTo(px + TILE - 9, py + TILE - 9).lineTo(px + TILE - 15, py + TILE - 14).lineTo(px + TILE - 21, py + TILE - 12);
+          g.stroke({ color: 0x5a3d20, width: 1.5, alpha: 0.6 });
+        }
       }
       if (t.terrain === "rich" && t.owner === -1) {
         for (const [dx, dy] of [[12, 14], [32, 20], [20, 34], [36, 38]]) g.circle(px + dx, py + dy, 2).fill(0x3e5a22);
@@ -297,6 +306,14 @@ export class Renderer {
 
   private drawOverlay(dt: number) {
     const g = this.overlay.clear();
+    if (this.preview) {
+      for (const tile of this.preview.tiles) {
+        const { x, y } = this.viewXY(tile);
+        g.roundRect(x * TILE + 2, y * TILE + 2, TILE - 4, TILE - 4, 6)
+          .fill({ color: this.preview.color, alpha: 0.28 })
+          .stroke({ color: this.preview.color, width: 2, alpha: 0.8 });
+      }
+    }
     if (this.hover !== -1) {
       const { x, y } = this.viewXY(this.hover);
       const active = this.canAct(this.hover);
