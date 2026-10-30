@@ -7,11 +7,12 @@ import {
   HOLE_END_MS,
   MAX_NAME_LENGTH,
   MAX_PLAYERS,
+  MAX_SPECTATORS,
   RECONNECT_SECONDS,
   ROOM_CODE_LENGTH,
   SHOT_TIME_MS,
 } from "../shared/rules";
-import { GolfState, PlayerState, type ShotMessage } from "../shared/state";
+import { GolfState, PlayerState, type ShotMessage, SpectatorState } from "../shared/state";
 import { Match } from "./match";
 
 const CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // no I/O to avoid confusion with 1/0
@@ -25,7 +26,7 @@ export function normalizeName(raw: unknown): string {
 }
 
 export class GolfRoom extends Room<{ state: GolfState }> {
-  maxClients = MAX_PLAYERS;
+  maxClients = MAX_PLAYERS + MAX_SPECTATORS;
   state = new GolfState();
   match = new Match(HOLES);
 
@@ -41,6 +42,16 @@ export class GolfRoom extends Room<{ state: GolfState }> {
     start: (client: Client) => {
       if (this.playerId(client) !== this.match.hostId || this.match.phase !== "lobby") return;
       this.match.start();
+      this.changed();
+    },
+
+    spectate: (client: Client, message: { id?: unknown; spectate?: unknown }) => {
+      if (this.playerId(client) !== this.match.hostId || typeof message?.id !== "string") return;
+      try {
+        this.match.setSpectator(message.id, message.spectate === true);
+      } catch {
+        return;
+      }
       this.changed();
     },
 
@@ -70,7 +81,7 @@ export class GolfRoom extends Room<{ state: GolfState }> {
     playAgain: (client: Client) => {
       if (this.playerId(client) !== this.match.hostId || this.match.phase !== "finished") return;
       for (const [sessionId, playerId] of this.sessions) {
-        if (!this.match.player(playerId)?.connected) this.sessions.delete(sessionId);
+        if (!this.match.player(playerId)?.connected && !this.match.spectator(playerId)) this.sessions.delete(sessionId);
       }
       for (const timer of this.dnfTimers.values()) timer.clear();
       this.dnfTimers.clear();
@@ -92,25 +103,26 @@ export class GolfRoom extends Room<{ state: GolfState }> {
 
   onJoin(client: Client, options: { name?: unknown }) {
     const name = normalizeName(options?.name);
-    const sameName = this.match.players.find((p) => p.name.toLowerCase() === name.toLowerCase());
+    const sameName = (p: { name: string }) => p.name.toLowerCase() === name.toLowerCase();
+    const player = this.match.players.find(sameName);
 
-    if (this.match.phase === "lobby") {
-      if (sameName) throw new Error("That name is already taken in this room");
-      this.match.addPlayer(client.sessionId, name);
-      this.sessions.set(client.sessionId, client.sessionId);
+    if (this.match.phase !== "lobby" && player && !player.connected && !player.dnf) {
+      // A disconnected player comes back mid-match, identified by nickname.
+      for (const [sessionId, playerId] of this.sessions) if (playerId === player.id) this.sessions.delete(sessionId);
+      this.sessions.set(client.sessionId, player.id);
+      this.reconnected(player.id);
     } else {
-      // Mid-match: only a disconnected player may come back, identified by nickname.
-      if (!sameName || sameName.connected || sameName.dnf) throw new Error("This match has already started");
-      for (const [sessionId, playerId] of this.sessions) if (playerId === sameName.id) this.sessions.delete(sessionId);
-      this.sessions.set(client.sessionId, sameName.id);
-      this.reconnected(sameName.id);
+      if (player || this.match.spectators.some(sameName)) throw new Error("That name is already taken in this room");
+      // Joins as a player while the lobby has a seat; otherwise (full or mid-match) as a spectator.
+      this.match.join(client.sessionId, name);
+      this.sessions.set(client.sessionId, client.sessionId);
     }
     this.changed();
   }
 
   onDrop(client: Client) {
     const id = this.playerId(client);
-    if (!id || this.match.phase === "lobby") return;
+    if (!id || this.match.phase === "lobby" || this.match.spectator(id)) return;
     this.allowReconnection(client, RECONNECT_SECONDS);
     this.disconnected(id);
   }
@@ -125,7 +137,7 @@ export class GolfRoom extends Room<{ state: GolfState }> {
     this.sessions.delete(client.sessionId);
     // Ignore stale sessions of a player who already rejoined under a new one.
     if (!id || [...this.sessions.values()].includes(id)) return;
-    if (this.match.phase === "lobby") {
+    if (this.match.phase === "lobby" || this.match.spectator(id)) {
       this.match.removePlayer(id);
       this.changed();
     } else if (this.match.player(id)?.connected || !this.dnfTimers.has(id)) {
@@ -217,6 +229,12 @@ export class GolfRoom extends Room<{ state: GolfState }> {
         if (ps.strokes[h] !== value) ps.strokes[h] = value ?? 0;
       });
     });
+
+    const sameSpectators = s.spectators.length === m.spectators.length && m.spectators.every((sp, i) => s.spectators[i].id === sp.id);
+    if (!sameSpectators) {
+      s.spectators.clear();
+      for (const sp of m.spectators) s.spectators.push(new SpectatorState({ id: sp.id, name: sp.name }));
+    }
   }
 
   private async generateCode(): Promise<string> {

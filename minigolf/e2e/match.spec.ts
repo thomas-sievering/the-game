@@ -14,6 +14,7 @@ type Golf = {
   holeIndex: number | null;
   busy: boolean;
   stats: { shots: number; checks: number; desyncs: number };
+  spectating: boolean;
   isMyTurn(): boolean;
   myBall(): [number, number] | null;
   shoot(dx: number, dy: number): boolean;
@@ -85,6 +86,48 @@ test("two players create, join and finish hole 1", async ({ browser }) => {
     expect(stats.checks).toBeGreaterThan(0);
     expect(stats.desyncs).toBe(0);
   }
+});
+
+test("the host spectates and a latecomer watches mid-match", async ({ browser }) => {
+  const alice = await (await browser.newContext()).newPage();
+  const bob = await (await browser.newContext()).newPage();
+  const carol = await (await browser.newContext()).newPage();
+
+  await alice.goto("/");
+  await alice.fill("#name", "Alice");
+  await alice.click("#create");
+  await expect(alice.locator("#lobby-code")).toHaveText(/^[A-Z]{4}$/);
+  const code = (await alice.locator("#lobby-code").textContent())!;
+  await bob.goto(`/?room=${code}`);
+  await bob.fill("#name", "Bob");
+  await bob.click("#join");
+  await expect(alice.locator("#lobby-players li")).toHaveCount(2);
+
+  // Only the host gets the move buttons; Alice moves herself to the spectators.
+  await expect(bob.locator("#lobby button[data-id]")).toHaveCount(0);
+  await alice.locator("#lobby-players li", { hasText: "Alice" }).getByRole("button", { name: "Spectate" }).click();
+  await expect(bob.locator("#lobby-players li")).toHaveCount(1);
+  await expect(bob.locator("#lobby-spectators li", { hasText: "Alice" })).toBeVisible();
+  await alice.screenshot({ path: shots("spectate-1-lobby") });
+
+  await alice.click("#start");
+  await expect(alice.locator("#spectating")).toBeVisible();
+  await expect(bob.locator("#spectating")).toBeHidden();
+  await expect.poll(() => golf(bob, (g) => g.isMyTurn())).toBe(true);
+  expect(await golf(alice, (g) => g.isMyTurn())).toBe(false);
+
+  await carol.goto(`/?room=${code}`);
+  await carol.fill("#name", "Carol");
+  await carol.click("#join");
+  await expect(carol.locator("#hud")).toBeVisible();
+  expect(await golf(carol, (g) => g.spectating)).toBe(true);
+
+  await bob.evaluate(([dx, dy]) => (window as any).__golf.shoot(dx, dy), warmUp.solution[0]);
+  for (const page of [alice, carol]) await expect.poll(() => golf(page, (g) => g.stats.shots)).toBe(1);
+  await carol.waitForTimeout(400);
+  await carol.screenshot({ path: shots("spectate-2-watching") });
+  for (const page of [alice, carol]) await expect.poll(() => golf(page, (g) => g.busy)).toBe(false);
+  for (const page of [alice, carol]) expect((await golf(page, (g) => g.stats)).desyncs).toBe(0);
 });
 
 test("a solo player plays all six holes to the podium", async ({ page }) => {

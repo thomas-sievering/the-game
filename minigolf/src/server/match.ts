@@ -21,6 +21,12 @@ export interface Player {
   y: number;
 }
 
+/** Someone in the room who watches instead of playing. */
+export interface Spectator {
+  id: string;
+  name: string;
+}
+
 export interface ShotOutcome {
   shooterId: string;
   aim: Point;
@@ -32,6 +38,7 @@ export interface ShotOutcome {
 export class Match {
   phase: Phase = "lobby";
   players: Player[] = [];
+  spectators: Spectator[] = [];
   holeIndex = 0;
   turnId: string | null = null;
   /** Increments every time a turn is handed out, even to the same player again. */
@@ -46,6 +53,37 @@ export class Match {
 
   player(id: string): Player | undefined {
     return this.players.find((p) => p.id === id);
+  }
+
+  spectator(id: string): Spectator | undefined {
+    return this.spectators.find((s) => s.id === id);
+  }
+
+  /** Joins as a player while the lobby has a free seat, otherwise as a spectator. */
+  join(id: string, name: string): void {
+    if (this.phase === "lobby" && this.players.length < MAX_PLAYERS) this.addPlayer(id, name);
+    else this.addSpectator(id, name);
+  }
+
+  addSpectator(id: string, name: string): Spectator {
+    const spectator = { id, name };
+    this.spectators.push(spectator);
+    this.hostId ??= id;
+    return spectator;
+  }
+
+  /** Host action in the lobby: moves someone between the players and the spectators. */
+  setSpectator(id: string, spectate: boolean): void {
+    if (this.phase !== "lobby") throw new Error("Match already started");
+    const player = this.player(id);
+    const spectator = this.spectator(id);
+    if (spectate && player) {
+      this.players = this.players.filter((p) => p !== player);
+      this.spectators.push({ id, name: player.name });
+    } else if (!spectate && spectator) {
+      this.addPlayer(id, spectator.name);
+      this.spectators = this.spectators.filter((s) => s !== spectator);
+    }
   }
 
   addPlayer(id: string, name: string): Player {
@@ -71,8 +109,10 @@ export class Match {
     return player;
   }
 
+  /** Removes a lobby player or a spectator. */
   removePlayer(id: string): void {
     this.players = this.players.filter((p) => p.id !== id);
+    this.spectators = this.spectators.filter((s) => s.id !== id);
     this.reassignHost();
   }
 
@@ -94,10 +134,10 @@ export class Match {
     if (this.phase === "playing" && (this.turnId === id || this.turnId === null)) this.advanceTurn();
   }
 
+  /** Host passes to the next connected player, or to a spectator if no player is left. */
   private reassignHost(): void {
-    const host = this.hostId ? this.player(this.hostId) : undefined;
-    if (host?.connected) return;
-    this.hostId = this.players.find((p) => p.connected)?.id ?? null;
+    if (this.hostId && (this.player(this.hostId)?.connected || this.spectator(this.hostId))) return;
+    this.hostId = this.players.find((p) => p.connected)?.id ?? this.spectators[0]?.id ?? null;
   }
 
   start(): void {

@@ -125,6 +125,47 @@ describe("match", () => {
     expect(m.hostId).toBe("p1");
   });
 
+  it("seats joiners as spectators once the lobby is full or the match has started", () => {
+    const m = new Match([hole()]);
+    for (let i = 0; i < 9; i++) m.join(`p${i}`, `P${i}`);
+    expect(m.players).toHaveLength(8);
+    expect(m.spectators.map((s) => s.id)).toEqual(["p8"]);
+    m.start();
+    m.join("late", "Late");
+    expect(m.spectators.map((s) => s.id)).toEqual(["p8", "late"]);
+  });
+
+  it("moves people between players and spectators in the lobby only", () => {
+    const m = new Match([hole()]);
+    m.addPlayer("host", "Host");
+    m.addPlayer("b", "B");
+    m.setSpectator("host", true);
+    expect(m.players.map((p) => p.id)).toEqual(["b"]);
+    expect(m.hostId).toBe("host");
+    m.setSpectator("host", false);
+    expect(m.players.map((p) => p.id)).toEqual(["b", "host"]);
+    expect(new Set(m.players.map((p) => p.color)).size).toBe(2);
+    m.setSpectator("b", true);
+    m.start();
+    expect(m.turnId).toBe("host");
+    expect(() => m.setSpectator("b", false)).toThrow();
+  });
+
+  it("does not seat a spectator in a full lobby", () => {
+    const m = new Match([hole()]);
+    for (let i = 0; i < 9; i++) m.join(`p${i}`, `P${i}`);
+    expect(() => m.setSpectator("p8", false)).toThrow();
+    expect(m.spectator("p8")).toBeDefined();
+  });
+
+  it("passes host to a spectator when no player is left", () => {
+    const m = new Match([hole()]);
+    m.addPlayer("a", "A");
+    m.addSpectator("s", "S");
+    m.removePlayer("a");
+    expect(m.hostId).toBe("s");
+  });
+
   it("plays through all holes to a finished podium", () => {
     const m = started(2);
     for (let h = 0; h < 2; h++) {

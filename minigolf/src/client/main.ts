@@ -3,6 +3,7 @@ import { Client, type Room } from "@colyseus/sdk";
 import type { Point } from "../shared/hole";
 import { HOLES } from "../shared/holes";
 import { MAX_AIM_DISTANCE, type ShotResult, TICK_RATE, simulateShot } from "../shared/physics";
+import { MAX_PLAYERS } from "../shared/rules";
 import { GolfState, type Phase, type PlayerState, type ShotMessage } from "../shared/state";
 import { isMuted, sfx, toggleMute } from "./audio";
 import { type BallView, Renderer } from "./render";
@@ -47,6 +48,15 @@ function players(): PlayerState[] {
 
 function me(): PlayerState | undefined {
   return players().find((p) => p.name === myName);
+}
+
+function spectators() {
+  return state() ? [...state()!.spectators] : [];
+}
+
+/** My id as a player or a spectator. */
+function myId(): string | undefined {
+  return (me() ?? spectators().find((sp) => sp.name === myName))?.id;
 }
 
 function currentHole() {
@@ -280,7 +290,8 @@ function onState() {
     if (isMyTurn()) sfx.yourTurn();
   }
 
-  const isHost = me()?.id === s.hostId;
+  const isHost = myId() === s.hostId;
+  show("spectating", !me());
   if (phase === "lobby") renderLobby(s, isHost);
   if (phase === "playing" || phase === "holeEnd") renderHud(s);
   if (phase === "holeEnd") renderScoreboard(s);
@@ -289,10 +300,30 @@ function onState() {
 
 function renderLobby(s: GolfState, isHost: boolean) {
   $("lobby-code").textContent = s.code;
+  const seatFree = players().length < MAX_PLAYERS;
+  /** Host tag plus, for the host, a button that moves the person to the other list. */
+  const rowEnd = (id: string, spectate: boolean) => {
+    const tag = id === s.hostId ? '<span class="tag">host</span>' : "";
+    const move =
+      isHost && (spectate || seatFree)
+        ? `<button class="link" data-id="${escapeHtml(id)}" data-spectate="${spectate}">${spectate ? "Spectate" : "Play"}</button>`
+        : "";
+    return `<span class="row-end">${tag}${move}</span>`;
+  };
+  $("lobby-players-title").textContent = `Players ${players().length}/${MAX_PLAYERS}`;
   $("lobby-players").innerHTML = players()
-    .map((p) => `<li>${dot(p.color)}<span>${escapeHtml(p.name)}</span>${p.id === s.hostId ? '<span class="tag">host</span>' : ""}</li>`)
+    .map((p) => `<li>${dot(p.color)}<span>${escapeHtml(p.name)}</span>${rowEnd(p.id, true)}</li>`)
     .join("");
+  $("lobby-spectators").innerHTML = spectators()
+    .map((sp) => `<li><span class="eye">👁</span><span>${escapeHtml(sp.name)}</span>${rowEnd(sp.id, false)}</li>`)
+    .join("");
+  show("lobby-spectators-box", spectators().length > 0);
+  for (const button of document.querySelectorAll<HTMLButtonElement>("#lobby button[data-id]")) {
+    button.onclick = () => room?.send("spectate", { id: button.dataset.id, spectate: button.dataset.spectate === "true" });
+  }
   show("start", isHost);
+  $<HTMLButtonElement>("start").disabled = players().length === 0;
+  $("lobby-wait").textContent = me() ? "Waiting for the host to start…" : "You're spectating. Waiting for the host to start…";
   show("lobby-wait", !isHost);
 }
 
@@ -482,6 +513,9 @@ window.__golf = {
   },
   get busy() {
     return !!anim;
+  },
+  get spectating() {
+    return !!state() && !me();
   },
   isMyTurn: () => canShoot(),
   myBall: () => (me() ? ballPosition(me()!) : null),

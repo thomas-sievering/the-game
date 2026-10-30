@@ -1,4 +1,5 @@
 export const MAX_PLAYERS = 8;
+export const MAX_SPECTATORS = 8;
 export const MAX_STROKES = 8;
 export const SHOT_TIME_MS = 30_000;
 export const RECONNECT_SECONDS = 60;

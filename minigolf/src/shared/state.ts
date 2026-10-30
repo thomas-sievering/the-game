@@ -18,6 +18,15 @@ export const PlayerState = schema(
 );
 export type PlayerState = SchemaType<typeof PlayerState>;
 
+export const SpectatorState = schema(
+  {
+    id: t.string(),
+    name: t.string(),
+  },
+  "SpectatorState",
+);
+export type SpectatorState = SchemaType<typeof SpectatorState>;
+
 export const GolfState = schema(
   {
     code: t.string(),
@@ -30,6 +39,7 @@ export const GolfState = schema(
     turnSeq: t.number().default(0),
     turnMs: t.number().default(0),
     players: t.array(PlayerState),
+    spectators: t.array(SpectatorState),
   },
   "GolfState",
 );

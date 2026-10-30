@@ -29,7 +29,12 @@
       <p class="muted">Room code</p>
       <div id="lobby-code" class="room-code"></div>
       <button id="copy-link" class="link">Copy invite link</button>
+      <p id="lobby-players-title" class="list-title"></p>
       <ul id="lobby-players" class="player-list"></ul>
+      <div id="lobby-spectators-box" class="hidden">
+        <p class="list-title">Spectators</p>
+        <ul id="lobby-spectators" class="player-list"></ul>
+      </div>
       <button id="start" class="primary hidden">Start match</button>
       <p id="lobby-wait" class="muted hidden">Waiting for the host to start…</p>
       <button id="leave-lobby" class="link">Leave</button>
@@ -40,6 +45,7 @@
         <div id="hole-info"></div>
         <div id="turn-info"></div>
         <div id="timer"></div>
+        <div id="spectating" class="hidden">Spectating</div>
       </div>
       <ul id="side-players" class="side-players"></ul>
       <div id="power" class="power hidden"><div id="power-fill"></div></div>

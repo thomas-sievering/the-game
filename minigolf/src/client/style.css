@@ -149,6 +149,12 @@ button.primary:hover {
   background: #ec6f68;
 }
 
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
 button.link {
   border: none;
   background: none;
@@ -226,6 +232,32 @@ button.link:hover {
   padding: 8px 12px;
   border-radius: 12px;
   background: var(--cream);
+}
+
+.list-title {
+  margin: 6px 0 -2px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--muted);
+  text-align: left;
+}
+
+.player-list .row-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.player-list .row-end button {
+  font-size: 13px;
+}
+
+.player-list .eye {
+  width: 14px;
+  flex: none;
+  text-align: center;
+  color: var(--muted);
 }
 
 .dot {
