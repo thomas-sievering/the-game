@@ -1,6 +1,6 @@
 import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
-import { CARDS, type Card, DECK_SIZE, MAX_COPIES, type Role, STARTER_DECK, deckError } from "../shared/cards";
+import { CARDS, type Card, DECK_SIZE, MAX_COPIES, STARTER_DECK, deckError } from "../shared/cards";
 import { BASE_HP, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, MAX_LEVEL, SHRINE, TICK_RATE, WAVE_TICKS, sellValue } from "../shared/sim";
 import { LanesState, type PlayerState } from "../shared/state";
 import { isMuted, sfx, toggleMute } from "./audio";
@@ -47,7 +47,9 @@ function loadDeck(): string[] {
   return [...STARTER_DECK];
 }
 
-function openDeck() {
+async function openDeck() {
+  // Card art is drawn by the renderer.
+  await rendererReady;
   draft = [...deck];
   render();
 }
@@ -219,10 +221,12 @@ function renderHand(self: PlayerState, tick: number) {
 
 /** `slot` is the hand slot whose shortcut key to show, or null outside the hand. */
 function cardHtml(card: Card, slot: number | null, cooldown: number): string {
-  const top = `<span class="cost">${card.cost}</span>${slot === null ? "" : `<span class="key">${slot + 1}</span>`}`;
+  const top =
+    `<span class="cost">${card.cost}</span>${slot === null ? "" : `<span class="key">${slot + 1}</span>`}` +
+    `<span class="art"><span class="mini" style="background-image: url('${renderer.cardArt(card.id)}')"></span></span>`;
   if (card.kind === "spell") {
     return (
-      `${top}<span class="icon">${SPELL_ICONS[card.id] ?? "✦"}</span><strong>${card.name}</strong>` +
+      `${top}<strong>${card.name}</strong>` +
       `<span class="text">${card.text}</span><span class="stats">Spell · ${card.cooldownTicks / TICK_RATE} s cooldown</span>` +
       (cooldown ? `<span class="cooldown">${Math.ceil(cooldown / TICK_RATE)}</span>` : "")
     );
@@ -230,27 +234,12 @@ function cardHtml(card: Card, slot: number | null, cooldown: number): string {
   const count = card.count ? `${card.count}× ` : "";
   const healer = card.role === "healer";
   return (
-    `${top}<span class="icon">${roleIcon(card.role)}</span><strong>${card.name}</strong>` +
+    `${top}<strong>${card.name}</strong>` +
     `<span class="text">${card.text}</span>` +
     `<span class="stats"><span title="Health">♥ ${count}${card.hp}</span>` +
     `<span title="${healer ? "Healing" : "Damage"}">${healer ? "✚" : "⚔"} ${card.damage}</span>` +
     `<span title="Range">◎ ${card.range}</span></span>`
   );
-}
-
-const SPELL_ICONS: Record<string, string> = { rally: "»", lightning: "ϟ", mend: "✚", frost: "❄", meteor: "☄", fury: "‼", muster: "⚑" };
-
-/** Same silhouettes as on the battlefield. */
-function roleIcon(role: Role): string {
-  const shapes: Record<Role, string> = {
-    melee: '<circle cx="12" cy="12" r="9"/>',
-    ranged: '<polygon points="12,3 21,19 3,19"/>',
-    tank: '<rect x="3" y="3" width="18" height="18" rx="3"/>',
-    fast: '<polygon points="12,2 22,12 12,22 2,12"/>',
-    splash: '<polygon points="21,12 16.5,19.8 7.5,19.8 3,12 7.5,4.2 16.5,4.2"/>',
-    healer: '<polygon points="9,3 15,3 15,9 21,9 21,15 15,15 15,21 9,21 9,15 3,15 3,9 9,9"/>',
-  };
-  return `<svg viewBox="0 0 24 24" width="22" height="22">${shapes[role]}</svg>`;
 }
 
 function select(slot: number) {
@@ -435,8 +424,8 @@ function main() {
     void enter(() => client.joinById(code, name(), LanesState));
   };
   $("start").onclick = () => room?.send("start");
-  $("home-deck").onclick = openDeck;
-  $("lobby-deck").onclick = openDeck;
+  $("home-deck").onclick = () => void openDeck();
+  $("lobby-deck").onclick = () => void openDeck();
   $("deck-done").onclick = () => closeDeck(true);
   $("deck-cancel").onclick = () => closeDeck(false);
   $("deck-reset").onclick = () => {
