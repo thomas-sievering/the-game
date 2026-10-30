@@ -27,6 +27,11 @@ function show(screen: "home" | "deck" | "lobby" | "game") {
   $("deck").classList.toggle("hidden", screen !== "deck");
   $("lobby").classList.toggle("hidden", screen !== "lobby");
   $("hud").classList.toggle("hidden", screen !== "game");
+  // The deck screen covers the field, so stop drawing it there; ticker is unset until the renderer is ready.
+  if (renderer.app.ticker) {
+    if (screen === "deck") renderer.app.stop();
+    else renderer.app.start();
+  }
 }
 
 function loadDeck(): string[] {

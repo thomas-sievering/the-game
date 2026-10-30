@@ -152,19 +152,17 @@ test("a player builds a deck in the lobby and draws only from it", async ({ brow
   await bob.click("#join");
   await expect(alice.locator("#lobby-players li")).toHaveCount(2);
 
+  // Swap four starter cards for three Knights and a Golem; few clicks, since CI renders slowly.
   await alice.click("#lobby-deck");
-  for (const name of new Set(STARTER_DECK.map((id) => CARDS[id].name))) {
+  for (const name of ["Footman", "Archer", "Runner", "Swarm"]) {
     await alice.getByRole("button", { name: `Remove ${name}` }).click();
   }
-  await expect(alice.locator("#deck-count")).toHaveText(/^0\/10/);
+  await expect(alice.locator("#deck-count")).toHaveText(/^6\/10/);
   await expect(alice.locator("#deck-done")).toBeDisabled();
-  const picks = { Knight: 3, Golem: 3, Sniper: 3, Frost: 1 };
-  for (const [name, copies] of Object.entries(picks)) {
-    for (let i = 0; i < copies; i++) await alice.getByRole("button", { name: `Add ${name}` }).click();
-  }
+  for (const name of ["Knight", "Knight", "Knight", "Golem"]) await alice.getByRole("button", { name: `Add ${name}` }).click();
   // Three copies is the cap.
   await expect(alice.getByRole("button", { name: "Add Knight" })).toBeDisabled();
-  await expect(alice.locator("#deck-count")).toHaveText(/^10\/10 cards · 9 units · 1 spell/);
+  await expect(alice.locator("#deck-count")).toHaveText(/^10\/10 cards · 8 units · 2 spells/);
   await alice.screenshot({ path: shots("deck-1-builder") });
   await alice.click("#deck-done");
   await expect(alice.locator("#lobby")).toBeVisible();
@@ -172,15 +170,13 @@ test("a player builds a deck in the lobby and draws only from it", async ({ brow
   await alice.click("#start");
   await expect.poll(() => lanes(alice, (l) => l.phase)).toBe("playing");
   await expect(alice.locator("#hand .hand-card strong")).toHaveCount(4);
-  const hand = await lanes(alice, (l) => l.hand);
-  for (const id of hand) expect(["knight", "golem", "sniper", "frost"]).toContain(id);
+  const deck = ["bomber", "brute", "golem", "knight", "knight", "knight", "lightning", "medic", "rally", "spearman"];
+  for (const id of await lanes(alice, (l) => l.hand)) expect(deck).toContain(id);
   // Bob never touched his deck, so he plays the starter deck.
   for (const id of await lanes(bob, (l) => l.hand)) expect(STARTER_DECK).toContain(id);
   await alice.screenshot({ path: shots("deck-2-hand") });
 
   // The deck is remembered in this browser.
   await alice.goto("/");
-  expect((await lanes(alice, (l) => l.deck)).sort()).toEqual(
-    ["frost", "golem", "golem", "golem", "knight", "knight", "knight", "sniper", "sniper", "sniper"],
-  );
+  expect((await lanes(alice, (l) => l.deck)).sort()).toEqual(deck);
 });
