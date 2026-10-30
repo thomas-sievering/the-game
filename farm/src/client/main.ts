@@ -49,6 +49,11 @@ let toastTimer = 0;
 let history: Record<string, number[]> = {};
 let lastSample = -1;
 let contractKey = "";
+/** The farmer a spectator follows; their panel and side of the board are shown. */
+let watchSide = 0;
+/** Recent moves of both farmers, newest first, shown to spectators. */
+let feed: { side: number; text: string }[] = [];
+const FEED_LENGTH = 8;
 
 function show(screen: "home" | "lobby" | "game") {
   $("home").classList.toggle("hidden", screen !== "home");
@@ -58,6 +63,11 @@ function show(screen: "home" | "lobby" | "game") {
 
 function me(): PlayerState | undefined {
   return room ? [...room.state.players].find((p) => p.id === room!.sessionId) : undefined;
+}
+
+/** The farmer whose panel is shown: yourself, or the one you watch as a spectator. */
+function viewed(): PlayerState | undefined {
+  return me() ?? (room ? [...room.state.players].find((p) => p.side === watchSide) : undefined);
 }
 
 function renderLobby(s: FarmState) {
@@ -93,11 +103,17 @@ function render() {
   if (s.phase === "lobby") return renderLobby(s);
   show("game");
   const self = me();
-  const mySide = self?.side ?? 0;
+  const shown = viewed();
+  const mySide = shown?.side ?? 0;
   renderer.mySide = mySide;
+  $("hud").classList.toggle("spectator", !self);
   $("spectating").classList.toggle("hidden", !!self);
-  for (const id of ["panel", "tools"]) $(id).classList.toggle("hidden", !self);
-  $("concede").classList.toggle("hidden", s.phase !== "playing");
+  $("spectating").textContent = shown && !self ? `Watching ${shown.name}` : "Spectating";
+  $("panel").classList.toggle("hidden", !shown);
+  $("tools").classList.toggle("hidden", !self);
+  $("concede").classList.toggle("hidden", s.phase !== "playing" || !self);
+  $("versus-box").classList.toggle("hidden", !!self);
+  $("feed").classList.toggle("hidden", !!self || !feed.length);
   const bySide = (side: number) => [...s.players].find((p) => p.side === side);
   for (const el of document.querySelectorAll<HTMLElement>(".farmer")) {
     const player = bySide(el.dataset.who === "me" ? mySide : 1 - mySide);
@@ -107,13 +123,14 @@ function render() {
   $("match-time").textContent = clock(Math.max(0, MATCH_TICKS - s.tick));
 
   sampleHistory(s);
-  if (self) {
-    $("coins").textContent = `${self.coins} coins`;
-    $("barn-size").textContent = `Barn ${barnCount(self)}/${self.capacity}`;
-    renderTools(self);
-    renderMarket(s, self);
-    renderContracts(s, self);
-    renderSabotage(s, self);
+  if (shown) {
+    $("coins").textContent = `${shown.coins} coins`;
+    $("barn-size").textContent = `Barn ${barnCount(shown)}/${shown.capacity}`;
+    if (self) renderTools(self);
+    else renderVersus(s, shown);
+    renderMarket(s, shown, !self);
+    renderContracts(s, shown, !self);
+    renderSabotage(s, shown, !self);
   }
   renderer.setTiles([...s.tiles]);
   updateHint();
@@ -139,6 +156,66 @@ function barnCount(player: PlayerState): number {
 
 function cost(t: Tool): number {
   return t in CROPS ? CROPS[t as CropId].seed : BUILDINGS[t as BuildingId].cost;
+}
+
+/** Both farmers side by side for spectators, the watched one first. */
+function renderVersus(s: FarmState, shown: PlayerState) {
+  const pair = [shown, [...s.players].find((p) => p.side !== shown.side)].filter((p): p is PlayerState => !!p);
+  const tiles = [...s.tiles];
+  const cooldowns = (p: PlayerState) =>
+    (["crows", "weeds", "dump"] as const)
+      .map((id) => {
+        const wait = Math.max(0, (p.ready.get(id) ?? 0) - s.tick);
+        return `<span class="${wait ? "muted" : ""}" title="${SABOTAGE[id].name}">${SABOTAGE_ICONS[id]}${wait ? Math.ceil(wait / TICK_RATE) : "✓"}</span>`;
+      })
+      .join(" ");
+  const rows: [string, (p: PlayerState) => string][] = [
+    ["Coins", (p) => String(p.coins)],
+    ["Worth", (p) => String(p.netWorth)],
+    ["Land", (p) => String(tiles.filter((t) => t.owner === p.side).length)],
+    ["Barn", (p) => `${barnCount(p)}/${p.capacity}`],
+    [
+      "Crops",
+      (p) => {
+        const mine = tiles.filter((t) => t.owner === p.side && t.crop);
+        return `${mine.length} · ${mine.filter((t) => t.growth >= 100).length} ripe`;
+      },
+    ],
+    ["Sabotage", cooldowns],
+  ];
+  $("versus").innerHTML =
+    `<tr><th></th>${pair.map((p, i) => `<th class="${i ? "them" : "me"}">${escapeHtml(p.name)}</th>`).join("")}</tr>` +
+    rows.map(([label, cell]) => `<tr><td class="muted">${label}</td>${pair.map((p) => `<td>${cell(p)}</td>`).join("")}</tr>`).join("");
+}
+
+/** A spectator-facing line for a farmer's move, or null for moves too frequent to list. */
+function feedText(fx: Fx): string | null {
+  const name = (side: number) => escapeHtml([...room!.state.players].find((p) => p.side === side)?.name ?? "?");
+  const who = name(fx.side);
+  const rival = name(1 - fx.side);
+  switch (fx.type) {
+    case "sell":
+      return `${who} sold ${fx.count} ${CROP_ICONS[fx.crop]} for ${fx.coins}`;
+    case "buy":
+      return `${who} bought land for ${fx.cost}`;
+    case "buyout":
+      return `${who} bought out ${rival}'s land for ${fx.cost}`;
+    case "contract":
+      return `${who} filled an order for ${fx.reward}`;
+    case "crows":
+      return `${who} sent crows at ${rival}`;
+    case "weeds":
+      return `${who} sowed weeds on ${rival}'s land`;
+    case "dump":
+      return `${who} dumped ${CROP_ICONS[fx.crop]} on the market`;
+    default:
+      return null;
+  }
+}
+
+function renderFeed() {
+  const side = viewed()?.side ?? 0;
+  $("feed").innerHTML = feed.map((e) => `<li class="${e.side === side ? "me" : "them"}">${e.text}</li>`).join("");
 }
 
 function renderTools(self: PlayerState) {
@@ -167,7 +244,7 @@ function sparkline(crop: CropId): string {
   return `<svg viewBox="0 0 100 16" preserveAspectRatio="none"><polyline points="${path}" fill="none" stroke="#8a7657" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
-function renderMarket(s: FarmState, self: PlayerState) {
+function renderMarket(s: FarmState, self: PlayerState, readOnly: boolean) {
   const dumpReady = (self.ready.get("dump") ?? 0) - s.tick;
   for (const row of $("market").children as HTMLCollectionOf<HTMLElement>) {
     const crop = row.dataset.crop as CropId;
@@ -180,11 +257,11 @@ function renderMarket(s: FarmState, self: PlayerState) {
     priceEl.classList.toggle("frozen", !!s.frozen.get(crop));
     row.querySelector(".spark")!.innerHTML = sparkline(crop);
     const sell = row.querySelector<HTMLButtonElement>("button.sell")!;
-    sell.disabled = stock === 0;
+    sell.disabled = readOnly || stock === 0;
     sell.textContent = stock ? `Sell ${stock}` : "Sell";
     sell.title = stock ? `Sell all ${stock} for about ${estimate(price, CROPS[crop].price, stock)} coins` : "";
     const dump = row.querySelector<HTMLButtonElement>("button.dump")!;
-    dump.disabled = stock < DUMP.units || dumpReady > 0 || self.coins < SABOTAGE.dump.cost;
+    dump.disabled = readOnly || stock < DUMP.units || dumpReady > 0 || self.coins < SABOTAGE.dump.cost;
     dump.title = `${SABOTAGE.dump.text} Costs ${SABOTAGE.dump.cost} coins.${dumpReady > 0 ? ` Ready in ${Math.ceil(dumpReady / TICK_RATE)} s.` : ""}`;
   }
 }
@@ -200,8 +277,9 @@ function estimate(price: number, base: number, n: number): number {
   return total;
 }
 
-function renderContracts(s: FarmState, self: PlayerState) {
-  const key = [...s.contracts].map((c) => c.id).join();
+function renderContracts(s: FarmState, self: PlayerState, readOnly: boolean) {
+  // Switching the watched farmer rebuilds the list so their stock shows at once.
+  const key = `${self.side}:${[...s.contracts].map((c) => c.id).join()}`;
   if (key !== contractKey) {
     contractKey = key;
     $("contracts").innerHTML = [...s.contracts]
@@ -227,16 +305,16 @@ function renderContracts(s: FarmState, self: PlayerState) {
         return `<span class="${have >= item.count ? "have" : ""}">${CROP_ICONS[item.crop as CropId]} ${Math.min(have, item.count)}/${item.count}</span>`;
       })
       .join(" ");
-    el.querySelector<HTMLButtonElement>(".deliver")!.disabled = !ready;
+    el.querySelector<HTMLButtonElement>(".deliver")!.disabled = readOnly || !ready;
     el.querySelector(".left")!.textContent = `${Math.max(0, Math.ceil((contract.expiresAt - s.tick) / TICK_RATE))} s`;
   }
 }
 
-function renderSabotage(s: FarmState, self: PlayerState) {
+function renderSabotage(s: FarmState, self: PlayerState, readOnly: boolean) {
   for (const button of $("sabotage").children as HTMLCollectionOf<HTMLButtonElement>) {
     const id = button.dataset.id as SabotageId;
     const wait = Math.max(0, (self.ready.get(id) ?? 0) - s.tick);
-    button.disabled = wait > 0 || self.coins < SABOTAGE[id].cost;
+    button.disabled = readOnly || wait > 0 || self.coins < SABOTAGE[id].cost;
     button.classList.toggle("armed", id === "weeds" && aimingWeeds);
     button.querySelector(".state")!.textContent = wait > 0 ? `${Math.ceil(wait / TICK_RATE)} s` : `${SABOTAGE[id].cost}`;
   }
@@ -341,8 +419,11 @@ function selectTool(t: Tool) {
 
 function onFx(events: Fx[]) {
   renderer.addFx(events);
-  const side = me()?.side;
+  const side = viewed()?.side;
+  const spectating = !me();
   for (const fx of events) {
+    const line = spectating ? feedText(fx) : null;
+    if (line) feed.unshift({ side: fx.side, text: line });
     const mine = fx.side === side;
     if (fx.type === "harvest" && mine) sfx.harvest();
     else if (fx.type === "sell" && mine) sfx.sell(fx.count);
@@ -350,10 +431,14 @@ function onFx(events: Fx[]) {
     else if (fx.type === "buyout") sfx.buyout();
     else if (fx.type === "contract") {
       sfx.contract();
-      if (!mine) toast(`${[...room!.state.players].find((p) => p.side === fx.side)?.name ?? "They"} filled an order`);
+      if (!mine && !spectating) toast(`${[...room!.state.players].find((p) => p.side === fx.side)?.name ?? "They"} filled an order`);
     } else if (fx.type === "crows") sfx.crows();
     else if (fx.type === "weeds") sfx.weeds();
     else if (fx.type === "dump") sfx.dump();
+  }
+  if (spectating) {
+    feed = feed.slice(0, FEED_LENGTH);
+    renderFeed();
   }
 }
 
@@ -386,6 +471,8 @@ async function enter(join: () => Promise<Room<any, FarmState>>) {
   history = {};
   lastSample = -1;
   contractKey = "";
+  watchSide = 0;
+  feed = [];
   delete $("result").dataset.shown;
   room.onStateChange(render);
   room.onMessage("fx", onFx);
@@ -450,6 +537,13 @@ function main() {
     updateHint();
   };
   buildPanel();
+  // Spectators click the other farmer's name to follow them instead.
+  document.querySelector<HTMLElement>('.farmer[data-who="them"]')!.onclick = () => {
+    if (!room || me()) return;
+    watchSide = 1 - watchSide;
+    render();
+    renderFeed();
+  };
   const muteLabel = () => ($("mute").textContent = isMuted() ? "🔇" : "🔊");
   muteLabel();
   $("mute").onclick = () => {
@@ -521,6 +615,9 @@ main();
   },
   get winner() {
     return room?.state.winner ?? -1;
+  },
+  get watching() {
+    return viewed()?.name ?? null;
   },
   get spectating() {
     return !!room && !me();

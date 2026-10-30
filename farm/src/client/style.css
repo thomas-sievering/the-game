@@ -201,6 +201,15 @@ button.primary {
   border-right: 6px solid var(--enemy);
 }
 
+#hud.spectator .farmer[data-who="them"] {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#hud.spectator .farmer[data-who="them"]:hover {
+  filter: brightness(1.08);
+}
+
 .farmer-worth {
   font-variant-numeric: tabular-nums;
   color: var(--coin);
@@ -230,6 +239,63 @@ button.primary {
   background: var(--panel);
   border-radius: 14px;
   overflow-y: auto;
+}
+
+.versus {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.versus th,
+.versus td {
+  padding: 2px 4px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.versus th:first-child,
+.versus td:first-child {
+  text-align: left;
+}
+
+.versus th.me {
+  color: var(--accent);
+}
+
+.versus th.them {
+  color: var(--enemy);
+}
+
+.feed {
+  position: absolute;
+  left: 64px;
+  bottom: 16px;
+  width: 320px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 4px;
+}
+
+.feed li {
+  padding: 4px 10px;
+  background: rgba(243, 233, 210, 0.9);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  border-left: 4px solid var(--enemy);
+}
+
+.feed li.me {
+  border-left-color: var(--accent);
+}
+
+.feed li:nth-child(n + 5) {
+  opacity: 0.6;
 }
 
 .coins-row {
