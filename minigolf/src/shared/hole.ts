@@ -5,6 +5,21 @@ export type Zone =
   | { type: "water"; points: Point[] }
   | { type: "slope"; points: Point[]; force: Point };
 
+/** Round bounce pad that kicks the ball back out faster than it came in. */
+export interface Bumper {
+  center: Point;
+  radius: number;
+}
+
+/**
+ * Obstacle that moves while balls are rolling. `period` is in seconds and `phase` (0..1) shifts its cycle.
+ * - slider: a solid block that glides out along `path` and back.
+ * - spinner: `arms` rounded bars of `length` and `width` turning around `center`; negative period turns anticlockwise.
+ */
+export type Mover =
+  | { type: "slider"; points: Point[]; path: Point; period: number; phase?: number }
+  | { type: "spinner"; center: Point; length: number; width: number; arms: number; period: number; phase?: number };
+
 export interface Hole {
   id: string;
   name: string;
@@ -14,9 +29,11 @@ export interface Hole {
   /** Closed polygons of solid blocks inside the fairway. */
   obstacles: Point[][];
   zones: Zone[];
+  bumpers?: Bumper[];
+  movers?: Mover[];
   tee: Point;
   cup: Point;
-  /** Aim vectors (target minus ball position) that hole out when played solo. */
+  /** Aim vectors (target minus ball position) that hole out when played solo from course tick 0. */
   solution: Point[];
 }
 

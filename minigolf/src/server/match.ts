@@ -32,6 +32,8 @@ export interface ShotOutcome {
   aim: Point;
   /** Ball positions the shot started from, in simulation order. */
   start: SimBall[];
+  /** Course clock when the shot started. */
+  startTick: number;
   result: ShotResult;
 }
 
@@ -44,6 +46,8 @@ export class Match {
   /** Increments every time a turn is handed out, even to the same player again. */
   turnSeq = 0;
   hostId: string | null = null;
+  /** Ticks balls have rolled on this hole; moving obstacles are posed from it. */
+  courseTick = 0;
 
   constructor(readonly holes: Hole[]) {}
 
@@ -167,6 +171,7 @@ export class Match {
 
   private beginHole(index: number): void {
     this.holeIndex = index;
+    this.courseTick = 0;
     for (const p of this.players) {
       p.strokes[index] = 0;
       p.onCourse = false;
@@ -242,7 +247,9 @@ export class Match {
       shooter.y = this.hole.tee[1];
     }
     const start = this.courseBalls();
-    const result = simulateShot(this.hole, start, id, aim);
+    const startTick = this.courseTick;
+    const result = simulateShot(this.hole, start, id, aim, { startTick });
+    this.courseTick += result.ticks;
 
     for (const ball of result.balls) {
       const p = this.player(ball.id)!;
@@ -257,7 +264,7 @@ export class Match {
     if (result.balls.find((b) => b.id === id)?.splashed) shooter.strokes[this.holeIndex] += 1;
     this.applyCap(shooter);
     this.advanceTurn();
-    return { shooterId: id, aim, start, result };
+    return { shooterId: id, aim, start, startTick, result };
   }
 
   /** Shot clock ran out: counts as a stroke, ball stays where it is. */

@@ -11,7 +11,9 @@ type Farm = {
   tiles: { owner: number; terrain: string; crop: string; growth: number; weeds: boolean }[];
   winner: number;
   spectating: boolean;
+  watching: string | null;
   tileOnScreen: (tile: number) => { x: number; y: number };
+  send: (type: string, message: unknown) => void;
 };
 
 const shots = (name: string) => `${process.env.SCREENSHOT_DIR ?? "artifacts/e2e"}/${name}.png`;
@@ -67,6 +69,16 @@ test("two farmers buy land, grow, sell, fill an order and sabotage", async ({ br
   await expect.poll(async () => (await tileState(bob, mirror(bought))).crop).toBe("wheat");
   await alice.screenshot({ path: shots("2-planted") });
   await bob.screenshot({ path: shots("3-planted-bob") });
+
+  // Hovering a growing crop explains its speed; hovering the well tool explains it.
+  const point = await farm(alice, (f, t) => f.tileOnScreen(t), tileAt(0, 1));
+  await alice.mouse.move(point.x, point.y);
+  await expect(alice.locator("#tip")).toContainText(/ripe in about \d+ s/);
+  await expect(alice.locator("#tip")).toContainText("Dry");
+  await alice.screenshot({ path: shots("2b-tile-tip") });
+  await alice.locator('.tool[data-tool="well"]').hover();
+  await expect(alice.locator("#tip")).toContainText("Waters the 8 tiles");
+  await alice.screenshot({ path: shots("2c-tool-tip") });
 
   // Wheat next to the pond ripens in 20 s; the dry tiles take twice as long.
   const wet = [tileAt(1, 0), tileAt(1, 1), bought];
@@ -158,13 +170,33 @@ test("the host moves themselves to spectators and starts a match they watch", as
   expect(await farm(alice, (f) => f.spectating)).toBe(true);
   expect(await farm(carol, (f) => f.spectating)).toBe(false);
   await expect(alice.locator("#spectating")).toBeVisible();
+  // Spectators see the watched farmer's panel read-only, and click the other name to switch.
+  await expect(alice.locator("#panel")).toBeVisible();
+  await expect(alice.locator("#tools")).toBeHidden();
+  await expect(alice.locator("#concede")).toBeHidden();
+  await expect(alice.locator("#contracts .contract").first()).toBeVisible();
+  // Only the tech tree button works for spectators: it opens a view, not an action.
+  await expect(alice.locator("#panel button:enabled:visible:not(#tech-open)")).toHaveCount(0);
+  await expect(alice.locator("#versus tr")).toHaveCount(7);
+  // A farmer's move shows up in the spectator's feed.
+  const land = (await farm(carol, (f) => f.side)) === 0 ? tileAt(2, 0) : mirror(tileAt(2, 0));
+  await farm(carol, (f, tile) => f.send("buy", { tile }), land);
+  await expect(alice.locator("#feed li", { hasText: "Carol bought land" })).toBeVisible();
+  const first = await farm(alice, (f) => f.watching);
   await alice.screenshot({ path: shots("spectate-2-watching") });
+  await alice.locator('.farmer[data-who="them"] .farmer-name').click();
+  await expect.poll(() => farm(alice, (f) => f.watching)).not.toBe(first);
+  await expect(alice.locator("#spectating")).toHaveText(`Watching ${await farm(alice, (f) => f.watching)}`);
+  await alice.screenshot({ path: shots("spectate-3-switched") });
 
-  // The spectator opens Carol's tech tree from her name badge and switches to Bob's; neither has research buttons.
-  await alice.locator('.farmer[data-who="me"] .tech-badge').click();
-  await expect(alice.locator("#tech-title")).toHaveText("Carol's tech tree");
-  await alice.locator('#tech-tabs button[data-side="1"]').click();
-  await expect(alice.locator("#tech-title")).toHaveText("Bob's tech tree");
+  // The spectator opens the other farmer's tech tree from their name badge (without switching farmers), then the watched one's; neither has research buttons.
+  const watching = await farm(alice, (f) => f.watching);
+  const other = watching === "Bob" ? "Carol" : "Bob";
+  await alice.locator('.farmer[data-who="them"] .tech-badge').click();
+  await expect(alice.locator("#tech-title")).toHaveText(`${other}'s tech tree`);
+  expect(await farm(alice, (f) => f.watching)).toBe(watching);
+  await alice.locator("#tech-tabs button", { hasText: watching! }).click();
+  await expect(alice.locator("#tech-title")).toHaveText(`${watching}'s tech tree`);
   await expect(alice.locator(".tech-node .research:visible")).toHaveCount(0);
   await alice.screenshot({ path: shots("spectate-3-tech") });
 });

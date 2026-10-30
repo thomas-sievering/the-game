@@ -1,6 +1,6 @@
 import { Application, Container, Graphics, Text } from "pixi.js";
 import { type Hole, type Point, holeExtent } from "../shared/hole";
-import { BALL_RADIUS, CUP_RADIUS, MAX_AIM_DISTANCE } from "../shared/physics";
+import { BALL_RADIUS, CUP_RADIUS, MAX_AIM_DISTANCE, moverPose } from "../shared/physics";
 
 export const PALETTE = {
   page: 0xf6f1e7,
@@ -20,6 +20,11 @@ export const PALETTE = {
   cup: 0x3d4a3a,
   flag: 0xe8615a,
   ink: 0x3b3b48,
+  bumper: 0xe78bb8,
+  bumperRim: 0xfaf7f0,
+  spinner: 0xe8615a,
+  slider: 0xf2b632,
+  sliderDark: 0xc98f1c,
 };
 
 export interface BallView {
@@ -57,6 +62,8 @@ export class Renderer {
   readonly app = new Application();
   private world = new Container();
   private course = new Container();
+  /** Bumpers and moving obstacles, redrawn every frame. */
+  private props = new Graphics();
   private dynamic = new Graphics();
   private flag = new Graphics();
   private labels = new Container();
@@ -66,6 +73,8 @@ export class Renderer {
   private rings: Ring[] = [];
   private trails = new Map<string, Point[]>();
   private time = 0;
+  /** Seconds left on each bumper's hit flash. */
+  private bumperFlash: number[] = [];
 
   async init(parent: HTMLElement): Promise<void> {
     await this.app.init({
@@ -76,7 +85,7 @@ export class Renderer {
       resolution: Math.min(window.devicePixelRatio || 1, 2),
     });
     parent.appendChild(this.app.canvas);
-    this.world.addChild(this.course, this.dynamic, this.flag, this.labels);
+    this.world.addChild(this.course, this.props, this.dynamic, this.flag, this.labels);
     this.app.stage.addChild(this.world);
     this.app.renderer.on("resize", () => this.fit());
   }
@@ -93,6 +102,8 @@ export class Renderer {
     this.trails.clear();
     this.particles = [];
     this.rings = [];
+    this.bumperFlash = [];
+    this.props.clear();
     if (!hole) return;
     this.drawCourse(hole);
     this.fit();
@@ -198,6 +209,21 @@ export class Renderer {
     }
     this.course.addChild(blocks);
 
+    // Faint tracks showing where moving obstacles go.
+    const tracks = new Graphics();
+    for (const mover of hole.movers ?? []) {
+      if (mover.type === "spinner") {
+        tracks.circle(...mover.center, mover.length + mover.width / 2).fill({ color: 0x5d7a52, alpha: 0.12 });
+      } else {
+        const swept = [...mover.points, ...mover.points.map(([x, y]) => [x + mover.path[0], y + mover.path[1]] as Point)];
+        const xs = swept.map((p) => p[0]);
+        const ys = swept.map((p) => p[1]);
+        const [x0, y0] = [Math.min(...xs), Math.min(...ys)];
+        tracks.roundRect(x0, y0, Math.max(...xs) - x0, Math.max(...ys) - y0, 6).fill({ color: 0x5d7a52, alpha: 0.12 });
+      }
+    }
+    this.course.addChild(tracks);
+
     const marks = new Graphics();
     const [tx, ty] = hole.tee;
     marks.roundRect(tx - 16, ty - 16, 32, 32, 8).fill({ color: PALETTE.tee, alpha: 0.9 });
@@ -229,6 +255,48 @@ export class Renderer {
     g.mask = mask;
     c.addChild(mask, g);
     return c;
+  }
+
+  bumperHit(index: number): void {
+    this.bumperFlash[index] = 0.25;
+  }
+
+  /** Draws bumpers and moving obstacles at course-clock substep `clock`. */
+  private drawProps(dt: number, hole: Hole, clock: number): void {
+    const g = this.props;
+    g.clear();
+    (hole.bumpers ?? []).forEach(({ center: [x, y], radius }, i) => {
+      const flash = Math.max(0, (this.bumperFlash[i] ?? 0) - dt);
+      this.bumperFlash[i] = flash;
+      const r = radius * (1 + flash * 0.6);
+      g.circle(x + 3, y + 5, radius).fill({ color: 0x2f4a2a, alpha: 0.22 });
+      g.circle(x, y, r).fill(flash > 0 ? 0xffffff : PALETTE.bumperRim);
+      g.circle(x, y, r - 4).fill(PALETTE.bumper);
+      g.circle(x, y, r * 0.38).fill({ color: 0xffffff, alpha: 0.55 + flash * 1.8 });
+    });
+
+    for (const mover of hole.movers ?? []) {
+      const pose = moverPose(mover, clock);
+      if (mover.type === "slider" && pose.type === "slider") {
+        const pts = mover.points.flatMap(([x, y]) => [x + pose.dx, y + pose.dy]);
+        g.poly(pts.map((v, i) => v + (i % 2 ? 6 : 4))).fill({ color: 0x5d7a52, alpha: 0.25 });
+        g.poly(pts).fill(PALETTE.slider).stroke({ width: 3, color: PALETTE.sliderDark, join: "round", alignment: 1 });
+      } else if (mover.type === "spinner" && pose.type === "spinner") {
+        const [cx, cy] = mover.center;
+        for (const [ux, uy] of pose.arms) {
+          const [tx, ty] = [cx + ux * mover.length, cy + uy * mover.length];
+          g.moveTo(cx + 4, cy + 6).lineTo(tx + 4, ty + 6).stroke({ width: mover.width, color: 0x5d7a52, alpha: 0.25, cap: "round" });
+        }
+        for (const [ux, uy] of pose.arms) {
+          const [tx, ty] = [cx + ux * mover.length, cy + uy * mover.length];
+          g.moveTo(cx, cy).lineTo(tx, ty).stroke({ width: mover.width, color: PALETTE.spinner, cap: "round" });
+          g.moveTo(cx + ux * mover.length * 0.3, cy + uy * mover.length * 0.3)
+            .lineTo(cx + ux * mover.length * 0.9, cy + uy * mover.length * 0.9)
+            .stroke({ width: mover.width * 0.3, color: 0xffffff, alpha: 0.6, cap: "round" });
+        }
+        g.circle(cx, cy, mover.width * 0.8).fill(PALETTE.wood).stroke({ width: 2, color: PALETTE.woodDark });
+      }
+    }
   }
 
   addTrailPoint(id: string, x: number, y: number): void {
@@ -279,11 +347,13 @@ export class Renderer {
     }
   }
 
-  draw(dt: number, balls: BallView[], aim: { from: Point; to: Point } | null): void {
+  /** `clock` is the course-clock substep that moving obstacles are drawn at. */
+  draw(dt: number, balls: BallView[], aim: { from: Point; to: Point } | null, clock: number): void {
     this.time += dt;
     const g = this.dynamic;
     g.clear();
     if (!this.hole) return;
+    this.drawProps(dt, this.hole, clock);
 
     for (const ring of this.rings) {
       ring.t += dt;

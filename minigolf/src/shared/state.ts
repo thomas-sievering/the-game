@@ -38,6 +38,8 @@ export const GolfState = schema(
     /** Changes whenever a new turn starts; clients restart their shot clock on change. */
     turnSeq: t.number().default(0),
     turnMs: t.number().default(0),
+    /** Course clock in ticks; moving obstacles are drawn at this pose between shots. */
+    courseTick: t.uint32().default(0),
     players: t.array(PlayerState),
     spectators: t.array(SpectatorState),
   },
@@ -53,4 +55,5 @@ export interface ShotMessage {
   holeIndex: number;
   aim: [number, number];
   start: { id: string; x: number; y: number }[];
+  startTick: number;
 }

@@ -201,6 +201,15 @@ button.primary {
   border-right: 6px solid var(--enemy);
 }
 
+#hud.spectator .farmer[data-who="them"] {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#hud.spectator .farmer[data-who="them"]:hover {
+  filter: brightness(1.08);
+}
+
 .farmer-worth {
   font-variant-numeric: tabular-nums;
   color: var(--coin);
@@ -232,6 +241,63 @@ button.primary {
   overflow-y: auto;
 }
 
+.versus {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.versus th,
+.versus td {
+  padding: 2px 4px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.versus th:first-child,
+.versus td:first-child {
+  text-align: left;
+}
+
+.versus th.me {
+  color: var(--accent);
+}
+
+.versus th.them {
+  color: var(--enemy);
+}
+
+.feed {
+  position: absolute;
+  left: 64px;
+  bottom: 16px;
+  width: 320px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 4px;
+}
+
+.feed li {
+  padding: 4px 10px;
+  background: rgba(243, 233, 210, 0.9);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  border-left: 4px solid var(--enemy);
+}
+
+.feed li.me {
+  border-left-color: var(--accent);
+}
+
+.feed li:nth-child(n + 5) {
+  opacity: 0.6;
+}
+
 .coins-row {
   display: flex;
   align-items: baseline;
@@ -252,6 +318,10 @@ button.primary {
   gap: 6px;
   padding: 4px 0;
   border-bottom: 1px solid var(--panel-2);
+}
+
+.market-row .info {
+  display: contents;
 }
 
 .market-row .icon {
@@ -614,4 +684,64 @@ button.primary {
 
 #tech-note {
   font-size: 12px;
+}
+
+#barn-size.full {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.tip {
+  position: fixed;
+  z-index: 10;
+  max-width: 280px;
+  padding: 10px 12px;
+  background: #fffaf0;
+  border: 1px solid #c9b48a;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.tip b:first-child {
+  display: inline-block;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.tip-key {
+  float: right;
+  margin-left: 8px;
+  padding: 0 5px;
+  border: 1px solid #c9b48a;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tip-row {
+  margin-top: 3px;
+}
+
+.tip-muted {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tip-warn {
+  margin-top: 3px;
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.tip-action {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--panel-2);
+  color: var(--leaf);
+  font-weight: 600;
 }

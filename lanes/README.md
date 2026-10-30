@@ -1,7 +1,7 @@
 # Lanes
 
 1v1 deckbuilding auto battler (Desert Strike meets Plants vs Zombies). See [PLAN.md](PLAN.md). Live at https://lanes.nexus.siever.ing.
-Playable in-match loop: room codes, a lobby, a hand of 4 cards from a 10-card starter deck, a 3×4 build grid, gold and income, waves every 20 s, 12 units and 4 spells. Accounts, collections and rewards are not built yet.
+Playable in-match loop: room codes, a lobby, a hand of 4 cards from a 10-card starter deck, a 3×4 build grid, gold and income, waves every 20 s, 12 units that level up to 3 by stacking the same card, and 7 spells. Accounts, collections and rewards are not built yet.
 
 ## Develop
 

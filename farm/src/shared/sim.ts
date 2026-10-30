@@ -19,9 +19,9 @@ export const BUYOUT = { factor: 2, fencedFactor: 3, cooldownTicks: 20 * TICK_RAT
 export const TRADE = { haggle: 110, guild: 125, wholesaleDrop: 20 };
 
 /** Growth points a crop gains per tick on wet grass; rich soil adds half, fertilizer a quarter, dry soil and weeds halve it. */
-const GROWTH_WET = 16;
+export const GROWTH_WET = 16;
 /** A crop needs growTicks × GROWTH_FULL points, so on wet grass it ripens in exactly growTicks. */
-const GROWTH_FULL = 16;
+export const GROWTH_FULL = 16;
 
 export const MARKET = {
   /** Price factor in permille of a crop's base price. */
@@ -572,11 +572,16 @@ export function research(farm: Farm, side: Side, id: TechId): Result {
 /** Growth points per tick for a crop on this tile. */
 export function growthRate(farm: Farm, tile: number): number {
   const t = farm.tiles[tile];
+  return rateFor(t.terrain, isWet(farm, tile), t.weedsUntil > farm.tick, hasTech(farm, t.owner, "fertilizer"));
+}
+
+/** Growth points per tick from a tile's conditions; the client uses it to show time left. */
+export function rateFor(terrain: Terrain | string, wet: boolean, weeds: boolean, fertilized = false): number {
   let rate = GROWTH_WET;
-  if (t.terrain === "rich") rate += GROWTH_WET / 2;
-  if (hasTech(farm, t.owner, "fertilizer")) rate += GROWTH_WET / 4;
-  if (!isWet(farm, tile)) rate /= 2;
-  if (t.weedsUntil > farm.tick) rate /= 2;
+  if (terrain === "rich") rate += GROWTH_WET / 2;
+  if (fertilized) rate += GROWTH_WET / 4;
+  if (!wet) rate /= 2;
+  if (weeds) rate /= 2;
   return rate;
 }
 

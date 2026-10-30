@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { Hole, Zone } from "../src/shared/hole";
+import type { Hole, Mover, Zone } from "../src/shared/hole";
 import { HOLES } from "../src/shared/holes";
-import { BALL_RADIUS, MAX_AIM_DISTANCE, simulateShot } from "../src/shared/physics";
+import { BALL_RADIUS, MAX_AIM_DISTANCE, moverPose, simulateShot, turnCosSin } from "../src/shared/physics";
 import { MAX_STROKES } from "../src/shared/rules";
 import { aimForDistance } from "./helpers";
 
@@ -109,6 +109,65 @@ describe("ball collisions", () => {
   });
 });
 
+describe("bumpers", () => {
+  it("kicks a slow ball back faster than it arrived", () => {
+    const hole: Hole = { ...box(), bumpers: [{ center: [300, 200], radius: 20 }] };
+    const r = simulateShot(hole, [{ id: "a", x: 200, y: 200 }], "a", [aimForDistance(120), 0], { record: true });
+    expect(r.events.some((e) => e.type === "bumper")).toBe(true);
+    // Without the bumper it would have stopped near x=320; instead it flies back past the start.
+    expect(r.balls[0].x).toBeLessThan(150);
+  });
+});
+
+describe("moving obstacles", () => {
+  const slider: Mover = { type: "slider", points: [[480, 100], [520, 100], [520, 300], [480, 300]], path: [0, 60], period: 2 };
+  const spinner: Mover = { type: "spinner", center: [500, 200], length: 80, width: 12, arms: 2, period: 2 };
+
+  it("computes cos and sin of whole turns accurately", () => {
+    for (let t = -1; t <= 2; t += 0.0137) {
+      const [c, s] = turnCosSin(t);
+      expect(c).toBeCloseTo(Math.cos(t * 2 * Math.PI), 8);
+      expect(s).toBeCloseTo(Math.sin(t * 2 * Math.PI), 8);
+    }
+  });
+
+  it("moves a slider out along its path and back over one period", () => {
+    const at = (n: number) => moverPose(slider, n) as { dx: number; dy: number; vy: number };
+    expect(at(0).dy).toBe(0);
+    expect(at(240).dy).toBeCloseTo(60);
+    expect(at(120).vy).toBeGreaterThan(0);
+    expect(at(360).vy).toBeLessThan(0);
+    expect(at(480).dy).toBe(0);
+  });
+
+  it("blocks a ball like a wall and hits resting balls when it moves into them", () => {
+    const hole: Hole = { ...box(), movers: [slider] };
+    const blocked = solo(hole, 100, 200, [MAX_AIM_DISTANCE, 0]);
+    expect(blocked.events.some((e) => e.type === "mover")).toBe(true);
+    expect(blocked.balls[0].x).toBeLessThan(480);
+
+    // A ball resting just below the block gets shoved down when the block slides onto it.
+    const r = simulateShot(hole, [{ id: "a", x: 100, y: 50 }, { id: "b", x: 500, y: 310 }], "a", [aimForDistance(300), 0]);
+    expect(r.balls[1].y).toBeGreaterThan(330);
+  });
+
+  it("swats a ball with a spinning arm", () => {
+    const hole: Hole = { ...box(), movers: [spinner] };
+    // A ball resting inside the sweep gets hit by an arm while another ball rolls, and is flung out.
+    const r = simulateShot(hole, [{ id: "a", x: 100, y: 50 }, { id: "b", x: 500, y: 250 }], "a", [MAX_AIM_DISTANCE, 0]);
+    expect(r.events.some((e) => e.type === "mover" && e.id === "b")).toBe(true);
+    const [dx, dy] = [r.balls[1].x - 500, r.balls[1].y - 200];
+    expect(Math.sqrt(dx * dx + dy * dy)).toBeGreaterThan(80 + 6 + BALL_RADIUS);
+  });
+
+  it("depends on the course clock the shot starts at", () => {
+    const hole: Hole = { ...box(), movers: [slider] };
+    const a = solo(hole, 100, 330, [MAX_AIM_DISTANCE, 0]);
+    const b = simulateShot(hole, [{ id: "a", x: 100, y: 330 }], "a", [MAX_AIM_DISTANCE, 0], { startTick: 120 });
+    expect(a.balls[0].x).not.toBe(b.balls[0].x);
+  });
+});
+
 describe("determinism", () => {
   it("produces identical results and frames for the same shot", () => {
     const hole = HOLES[5];
@@ -119,6 +178,16 @@ describe("determinism", () => {
     expect(two.events).toEqual(one.events);
     expect(two.frames!.length).toBe(one.frames!.length);
     two.frames!.forEach((f, i) => expect(Array.from(f)).toEqual(Array.from(one.frames![i])));
+  });
+
+  it("replays moving obstacles identically from any course clock", () => {
+    const hole = HOLES[9];
+    const balls = [{ id: "a", x: 1000, y: 120 }, { id: "b", x: 1100, y: 420 }];
+    const one = simulateShot(hole, balls, "a", [40, 200], { record: true, startTick: 777 });
+    const two = simulateShot(hole, balls, "a", [40, 200], { record: true, startTick: 777 });
+    expect(one.events.some((e) => e.type === "mover")).toBe(true);
+    expect(two.balls).toEqual(one.balls);
+    expect(two.events).toEqual(one.events);
   });
 
   it("ends the recorded animation exactly on the authoritative result", () => {
@@ -139,8 +208,11 @@ describe("holes", () => {
     expect(hole.solution.length).toBeLessThanOrEqual(MAX_STROKES);
     let pos = { x: hole.tee[0], y: hole.tee[1] };
     let holed = false;
+    let tick = 0;
     for (const aim of hole.solution) {
-      const ball = simulateShot(hole, [{ id: "p", ...pos }], "p", aim).balls[0];
+      const result = simulateShot(hole, [{ id: "p", ...pos }], "p", aim, { startTick: tick });
+      const ball = result.balls[0];
+      tick += result.ticks;
       expect(ball.splashed).toBe(false);
       pos = { x: ball.x, y: ball.y };
       holed = ball.holed;

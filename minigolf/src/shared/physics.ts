@@ -1,9 +1,10 @@
 // Deterministic shot simulation shared by server and client.
 // Only + - * / and Math.sqrt are used, so results are bit-identical across JS engines.
-import { type Hole, type Point, type Segment, holeSegments, pointInPolygon } from "./hole";
+// Integer ops on whole substep counts (%, Math.round) are exact too.
+import { type Hole, type Mover, type Point, type Segment, holeSegments, pointInPolygon } from "./hole";
 
 export const TICK_RATE = 120;
-const SUBSTEPS = 2;
+export const SUBSTEPS = 2;
 const DT = 1 / TICK_RATE / SUBSTEPS;
 const MAX_TICKS = TICK_RATE * 25;
 
@@ -21,6 +22,10 @@ const WALL_TANGENT_KEEP = 0.98;
 const BALL_RESTITUTION = 0.92;
 const CUP_CAPTURE_SPEED = 380;
 const STOP_SPEED = 6;
+const BUMPER_RESTITUTION = 0.85;
+const BUMPER_KICK = 230;
+const MOVER_RESTITUTION = 0.6;
+const PI = 3.141592653589793;
 const SOUND_SPEED = 25;
 
 export interface SimBall {
@@ -33,7 +38,9 @@ export type SimEvent =
   | { tick: number; type: "wall"; id: string; speed: number }
   | { tick: number; type: "ball"; id: string; other: string; speed: number }
   | { tick: number; type: "cup"; id: string }
-  | { tick: number; type: "splash"; id: string; x: number; y: number };
+  | { tick: number; type: "splash"; id: string; x: number; y: number }
+  | { tick: number; type: "bumper"; id: string; index: number; speed: number }
+  | { tick: number; type: "mover"; id: string; speed: number };
 
 export interface BallResult {
   id: string;
@@ -45,10 +52,11 @@ export interface BallResult {
 }
 
 export interface ShotResult {
+  /** Ticks the shot lasted; the course clock advances by this much. */
   ticks: number;
   events: SimEvent[];
   balls: BallResult[];
-  /** When recorded: per tick, [x, y] of every ball in input order (NaN once removed). */
+  /** When recorded: per tick since the shot began, [x, y] of every ball in input order (NaN once removed). */
   frames?: Float64Array[];
 }
 
@@ -68,6 +76,7 @@ interface Body {
 interface World {
   segments: Segment[];
   hole: Hole;
+  movers: Mover[];
 }
 
 const worlds = new WeakMap<Hole, World>();
@@ -75,7 +84,7 @@ const worlds = new WeakMap<Hole, World>();
 function worldFor(hole: Hole): World {
   let world = worlds.get(hole);
   if (!world) {
-    world = { segments: holeSegments(hole), hole };
+    world = { segments: holeSegments(hole), hole, movers: hole.movers ?? [] };
     worlds.set(hole, world);
   }
   return world;
@@ -106,6 +115,59 @@ function surfaceAt(hole: Hole, x: number, y: number): { sand: boolean; water: bo
   return { sand, water, fx, fy };
 }
 
+// ── Moving obstacles ──
+// A mover's pose depends only on the course clock, counted in whole substeps since the hole began.
+// The clock runs only while balls roll, so between shots the course stands still.
+
+/** Fraction (0..1) of the way through a cycle of `period` seconds at substep `n`. */
+function cycle(period: number, phase: number | undefined, n: number): number {
+  const length = Math.max(1, Math.round(Math.abs(period) * TICK_RATE * SUBSTEPS));
+  return ((n + Math.round((phase ?? 0) * length)) % length) / length;
+}
+
+/** [cos, sin] of an angle given in whole turns, by polynomial so it stays deterministic. */
+export function turnCosSin(turns: number): Point {
+  let x = turns % 1;
+  if (x >= 0.5) x -= 1;
+  else if (x < -0.5) x += 1;
+  const q = Math.round(x * 4);
+  const r = (x - q / 4) * 2 * PI;
+  const r2 = r * r;
+  const sin = r * (1 - (r2 / 6) * (1 - (r2 / 20) * (1 - (r2 / 42) * (1 - r2 / 72))));
+  const cos = 1 - (r2 / 2) * (1 - (r2 / 12) * (1 - (r2 / 30) * (1 - (r2 / 56) * (1 - r2 / 90))));
+  if (q === 1) return [-sin, cos];
+  if (q === -1) return [sin, -cos];
+  if (q === 2 || q === -2) return [-cos, -sin];
+  return [cos, sin];
+}
+
+export type MoverPose =
+  | { type: "slider"; dx: number; dy: number; vx: number; vy: number }
+  /** `arms` are unit directions; `omega` is in radians per second. */
+  | { type: "spinner"; arms: Point[]; omega: number };
+
+/** Where a mover is at substep `n` of the course clock. */
+export function moverPose(mover: Mover, n: number): MoverPose {
+  const u = cycle(mover.period, mover.phase, n);
+  if (mover.type === "slider") {
+    // Out and back with eased ends, so the block lingers at each end.
+    const out = u < 0.5;
+    const tri = out ? u * 2 : 2 - u * 2;
+    const ease = tri * tri * (3 - 2 * tri);
+    const rate = ((out ? 2 : -2) / mover.period) * 6 * tri * (1 - tri);
+    return { type: "slider", dx: mover.path[0] * ease, dy: mover.path[1] * ease, vx: mover.path[0] * rate, vy: mover.path[1] * rate };
+  }
+  const turn = mover.period < 0 ? 1 - u : u;
+  const arms: Point[] = [];
+  for (let k = 0; k < mover.arms; k++) arms.push(turnCosSin(turn + k / mover.arms));
+  return { type: "spinner", arms, omega: (2 * PI) / mover.period };
+}
+
+/** Course-clock substep at the start of a tick. */
+export function clockSubstep(tick: number): number {
+  return tick * SUBSTEPS;
+}
+
 /**
  * Simulates one shot: the shooter's ball gets the aim velocity, every other ball starts at rest.
  * Balls collide with walls and with each other.
@@ -115,8 +177,9 @@ export function simulateShot(
   balls: SimBall[],
   shooterId: string,
   aim: Point,
-  options: { record?: boolean } = {},
+  options: { record?: boolean; startTick?: number } = {},
 ): ShotResult {
+  const startTick = options.startTick ?? 0;
   const world = worldFor(hole);
   const [vx, vy] = aimToVelocity(aim);
   const bodies: Body[] = balls.map((b) => ({
@@ -148,7 +211,7 @@ export function simulateShot(
 
   while (tick < MAX_TICKS) {
     tick++;
-    for (let s = 0; s < SUBSTEPS; s++) step(world, bodies, events, tick);
+    for (let s = 0; s < SUBSTEPS; s++) step(world, bodies, events, tick, clockSubstep(startTick + tick - 1) + s);
     record();
     if (bodies.every((b) => !b.active || (b.vx === 0 && b.vy === 0))) break;
   }
@@ -167,8 +230,10 @@ export function simulateShot(
   };
 }
 
-function step(world: World, bodies: Body[], events: SimEvent[], tick: number): void {
-  const { hole, segments } = world;
+function step(world: World, bodies: Body[], events: SimEvent[], tick: number, substep: number): void {
+  const { hole, segments, movers } = world;
+  const poses = movers.map((m) => moverPose(m, substep));
+  const bumpers = hole.bumpers ?? [];
 
   for (const b of bodies) {
     if (!b.active) continue;
@@ -181,21 +246,24 @@ function step(world: World, bodies: Body[], events: SimEvent[], tick: number): v
     if (speed < STOP_SPEED && slope <= roll) {
       b.vx = 0;
       b.vy = 0;
-      continue;
+      // A resting ball only needs attention when something can move into it.
+      if (movers.length === 0) continue;
+    } else {
+      b.vx += surface.fx * DT;
+      b.vy += surface.fy * DT;
+      speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+      if (speed > 0) {
+        const next = Math.max(0, speed - (roll + drag * speed) * DT);
+        b.vx = (b.vx / speed) * next;
+        b.vy = (b.vy / speed) * next;
+      }
+      b.x += b.vx * DT;
+      b.y += b.vy * DT;
     }
 
-    b.vx += surface.fx * DT;
-    b.vy += surface.fy * DT;
-    speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
-    if (speed > 0) {
-      const next = Math.max(0, speed - (roll + drag * speed) * DT);
-      b.vx = (b.vx / speed) * next;
-      b.vy = (b.vy / speed) * next;
-    }
-    b.x += b.vx * DT;
-    b.y += b.vy * DT;
-
+    for (let i = 0; i < movers.length; i++) collideMover(b, movers[i], poses[i], events, tick);
     for (const seg of segments) collideSegment(b, seg, events, tick);
+    for (let i = 0; i < bumpers.length; i++) collideBumper(b, bumpers[i].center, bumpers[i].radius, i, events, tick);
 
     const after = surfaceAt(hole, b.x, b.y);
     if (after.water) {
@@ -224,24 +292,85 @@ function step(world: World, bodies: Body[], events: SimEvent[], tick: number): v
   }
 }
 
-function collideSegment(b: Body, seg: Segment, events: SimEvent[], tick: number): void {
-  const ex = seg.bx - seg.ax;
-  const ey = seg.by - seg.ay;
+/** Closest point to the ball on the segment a→b. */
+function closestOnSegment(b: Body, ax: number, ay: number, bx: number, by: number): Point {
+  const ex = bx - ax;
+  const ey = by - ay;
   const lengthSq = ex * ex + ey * ey;
-  let t = lengthSq > 0 ? ((b.x - seg.ax) * ex + (b.y - seg.ay) * ey) / lengthSq : 0;
+  let t = lengthSq > 0 ? ((b.x - ax) * ex + (b.y - ay) * ey) / lengthSq : 0;
   t = t < 0 ? 0 : t > 1 ? 1 : t;
-  const px = seg.ax + ex * t;
-  const py = seg.ay + ey * t;
+  return [ax + ex * t, ay + ey * t];
+}
+
+/** Pushes the ball out to `reach` from point p; returns the contact normal, or null if not touching. */
+function separate(b: Body, px: number, py: number, reach: number): Point | null {
   const dx = b.x - px;
   const dy = b.y - py;
   const distSq = dx * dx + dy * dy;
-  if (distSq >= BALL_RADIUS * BALL_RADIUS || distSq === 0) return;
-
+  if (distSq >= reach * reach || distSq === 0) return null;
   const dist = Math.sqrt(distSq);
   const nx = dx / dist;
   const ny = dy / dist;
-  b.x = px + nx * BALL_RADIUS;
-  b.y = py + ny * BALL_RADIUS;
+  b.x = px + nx * reach;
+  b.y = py + ny * reach;
+  return [nx, ny];
+}
+
+/** Bounces the ball off a surface moving at (wx, wy); returns the closing speed, or 0 if they separate. */
+function bounceMoving(b: Body, nx: number, ny: number, wx: number, wy: number): number {
+  const rx = b.vx - wx;
+  const ry = b.vy - wy;
+  const vn = rx * nx + ry * ny;
+  if (vn >= 0) return 0;
+  b.vx = wx + rx - vn * (1 + MOVER_RESTITUTION) * nx;
+  b.vy = wy + ry - vn * (1 + MOVER_RESTITUTION) * ny;
+  return -vn;
+}
+
+function collideMover(b: Body, mover: Mover, pose: MoverPose, events: SimEvent[], tick: number): void {
+  let hit = 0;
+  if (mover.type === "slider" && pose.type === "slider") {
+    const pts = mover.points;
+    for (let i = 0; i < pts.length; i++) {
+      const [ax, ay] = pts[i];
+      const [bx, by] = pts[(i + 1) % pts.length];
+      const [px, py] = closestOnSegment(b, ax + pose.dx, ay + pose.dy, bx + pose.dx, by + pose.dy);
+      const n = separate(b, px, py, BALL_RADIUS);
+      if (n) hit = Math.max(hit, bounceMoving(b, n[0], n[1], pose.vx, pose.vy));
+    }
+  } else if (mover.type === "spinner" && pose.type === "spinner") {
+    const [cx, cy] = mover.center;
+    for (const [ux, uy] of pose.arms) {
+      const [px, py] = closestOnSegment(b, cx, cy, cx + ux * mover.length, cy + uy * mover.length);
+      const n = separate(b, px, py, BALL_RADIUS + mover.width / 2);
+      // Surface velocity of the turning bar at the contact point.
+      if (n) hit = Math.max(hit, bounceMoving(b, n[0], n[1], -pose.omega * (py - cy), pose.omega * (px - cx)));
+    }
+  }
+  if (hit > SOUND_SPEED) events.push({ tick, type: "mover", id: b.id, speed: hit });
+}
+
+function collideBumper(b: Body, center: Point, radius: number, index: number, events: SimEvent[], tick: number): void {
+  const n = separate(b, center[0], center[1], BALL_RADIUS + radius);
+  if (!n) return;
+  const [nx, ny] = n;
+  const vn = b.vx * nx + b.vy * ny;
+  if (vn >= 0) return;
+  const tx = b.vx - vn * nx;
+  const ty = b.vy - vn * ny;
+  let out = -vn * BUMPER_RESTITUTION + BUMPER_KICK;
+  const speed = Math.sqrt(out * out + tx * tx + ty * ty);
+  if (speed > MAX_SPEED) out = out * (MAX_SPEED / speed);
+  b.vx = tx + out * nx;
+  b.vy = ty + out * ny;
+  events.push({ tick, type: "bumper", id: b.id, index, speed: out });
+}
+
+function collideSegment(b: Body, seg: Segment, events: SimEvent[], tick: number): void {
+  const [px, py] = closestOnSegment(b, seg.ax, seg.ay, seg.bx, seg.by);
+  const n = separate(b, px, py, BALL_RADIUS);
+  if (!n) return;
+  const [nx, ny] = n;
 
   const vn = b.vx * nx + b.vy * ny;
   if (vn >= 0) return;
