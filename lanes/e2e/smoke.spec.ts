@@ -83,8 +83,8 @@ test("the host spectates and a latecomer watches mid-match", async ({ browser })
     expect(await lanes(page, (l) => l.spectating)).toBe(true);
     await expect(page.locator("#spectating")).toBeVisible();
     await expect(page.locator(".bottom")).toBeHidden();
-    // Spectators see neither player's hand, gold or grid.
-    expect(await lanes(page, (l) => l.visibleGrids)).toEqual([0, 0]);
+    // Spectators see both players' grids.
+    expect(await lanes(page, (l) => l.visibleGrids)).toEqual([12, 12]);
   }
   await expect.poll(() => lanes(dave, (l) => l.unitCount), { timeout: 30_000 }).toBeGreaterThan(0);
   await dave.screenshot({ path: shots("spectate-2-watching") });
@@ -118,6 +118,16 @@ test("two players build, a wave fights and a spell is cast", async ({ browser })
     for (const cell of cells) expect(await placeUnit(page, cell)).toBe(true);
   }
   await alice.screenshot({ path: shots("2-placed") });
+
+  // Bob sells a pad: click it, then S.
+  const gold = await lanes(bob, (l) => l.gold);
+  const pad = await lanes(bob, (l) => l.cellOnScreen(9));
+  await bob.mouse.click(pad.x, pad.y);
+  await expect(bob.locator("#sell")).toBeVisible();
+  await bob.keyboard.press("s");
+  await expect.poll(() => lanes(bob, (l) => l.grid[9])).toBe("");
+  expect(await lanes(bob, (l) => l.gold)).toBeGreaterThan(gold);
+  expect(await placeUnit(bob, 9)).toBe(true);
   // Each player only receives their own grid.
   for (const page of [alice, bob]) expect((await lanes(page, (l) => l.visibleGrids)).sort()).toEqual([0, 12]);
 
@@ -127,7 +137,8 @@ test("two players build, a wave fights and a spell is cast", async ({ browser })
   let cast = false;
   for (let cell = 0; !cast && cell < 12; cell++) {
     cast = await castSpell(alice);
-    if (!cast) {
+    // Occupied pads refuse other cards, so only build on empty ones to keep the hand moving.
+    if (!cast && !(await lanes(alice, (l, c) => l.grid[c], cell))) {
       await placeUnit(alice, cell);
       await alice.waitForTimeout(1500);
     }

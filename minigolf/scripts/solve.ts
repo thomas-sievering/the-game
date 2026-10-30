@@ -114,6 +114,6 @@ for (const file of readdirSync(HOLES_DIR).filter((f) => f.endsWith(".json") && f
     continue;
   }
   console.log(`  solved in ${solution.length}`);
-  const text = readFileSync(path, "utf8").replace(/"solution": \[[^\]]*(\[[^\]]*\][^\]]*)*\]/, `"solution": ${JSON.stringify(solution)}`);
+  const text = readFileSync(path, "utf8").replace(/"solution": \[(\s*\[[^\]]*\],?)*\s*\]/, `"solution": ${JSON.stringify(solution)}`);
   writeFileSync(path, text);
 }

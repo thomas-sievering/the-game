@@ -49,7 +49,6 @@
       </div>
       <ul id="side-players" class="side-players"></ul>
       <div id="power" class="power hidden"><div id="power-fill"></div></div>
-      <button id="mute" class="mute" title="Toggle sound">🔊</button>
     </div>
 
     <section id="scoreboard" class="screen card wide hidden">
@@ -68,6 +67,14 @@
     </section>
 
     <div id="banner" class="banner hidden"></div>
+
+    <div class="sound">
+      <label class="music" title="Music volume">
+        <span>Music</span>
+        <input id="music-volume" type="range" min="0" max="100" step="1" />
+      </label>
+      <button id="mute" title="Toggle sound">🔊</button>
+    </div>
 
     <script type="module" src="/src/client/main.ts"></script>
   </body>

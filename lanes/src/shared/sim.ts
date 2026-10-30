@@ -2,7 +2,7 @@
 // Use only + - * / and Math.sqrt on non-integers, and keep iteration order stable.
 // The RNG uses integer % on values below 2^53, which is exact.
 
-import { CARDS, MAX_LEVEL, SIZE, type SpellCard, STARTER_DECK, levelStats, unitCard } from "./cards";
+import { CARDS, SIZE, type SpellCard, STARTER_DECK, unitCard } from "./cards";
 
 export const TICK_RATE = 20;
 export const FIELD_WIDTH = 1200;
@@ -23,6 +23,8 @@ export const AGGRO_RANGE = 170;
 /** Each column closer to the field spawns this much further forward. */
 export const COLUMN_SPAWN_STEP = 15;
 export const DRAW = 2;
+/** Playing a unit card on a pad holding the same card levels it up, to at most this level. */
+export const MAX_LEVEL = 3;
 /** Each base shoots the nearest enemy in reach. */
 export const TURRET = { damage: 25, range: 160, attackTicks: 20 };
 /** Neutral shrine in the middle of the centre lane. Units standing in it alone capture it; the owner earns extra gold per second. */
@@ -34,21 +36,19 @@ export interface Unit {
   id: number;
   side: Side;
   card: string;
-  /** 1 to MAX_LEVEL, from the build cell it spawned from. */
-  level: number;
   row: number;
   x: number;
   y: number;
   hp: number;
   maxHp: number;
-  /** Damage per hit, or healing per hit for healers, at this unit's level. */
-  damage: number;
   cooldown: number;
   hasteTicks: number;
   hasteMultiplier: number;
   frozenTicks: number;
   furyTicks: number;
   furyMultiplier: number;
+  /** 1 to MAX_LEVEL; scales health, damage and bounty. */
+  level: number;
   breached?: boolean;
 }
 
@@ -165,9 +165,21 @@ export function rowCenter(row: number): number {
   return row * ROW_HEIGHT + ROW_HEIGHT / 2;
 }
 
+/** Scales a stat for a unit level: +50% per level above 1, rounded down. */
+export function scaled(value: number, level: number): number {
+  const twice = value * (level + 1);
+  return (twice - (twice % 2)) / 2;
+}
+
+/** Gold that selling a pad gives back: half of what its levels cost, rounded down. */
+export function sellValue(cardId: string, level: number): number {
+  const spent = unitCard(cardId).cost * level;
+  return (spent - (spent % 2)) / 2;
+}
+
 /**
- * Plays the card in a hand slot. Unit cards need a build cell: placing on the same unit levels it up (to MAX_LEVEL),
- * placing on a different unit replaces it at level 1. Returns an error message or null.
+ * Plays the card in a hand slot. Unit cards need a build cell: an empty one, or one holding the same card
+ * below MAX_LEVEL, which levels it up. Returns an error message or null.
  */
 export function play(battle: Battle, side: Side, handIndex: number, cell?: number): string | null {
   if (battle.winner !== -1) return "The match is over";
@@ -176,20 +188,34 @@ export function play(battle: Battle, side: Side, handIndex: number, cell?: numbe
   if (!card) return "No card in that slot";
   if (card.kind === "unit") {
     if (cell === undefined || !Number.isInteger(cell) || cell < 0 || cell >= ROWS * COLS) return "Pick a cell on your grid";
-    if (player.grid[cell] === card.id && player.levels[cell] >= MAX_LEVEL) return `${card.name} is already level ${MAX_LEVEL}`;
+    const there = player.grid[cell];
+    if (there && there !== card.id) return "That pad is taken; sell it first";
+    if (there && player.levels[cell] >= MAX_LEVEL) return `${card.name} is already max level`;
   } else if ((player.ready[card.id] ?? 0) > battle.tick) {
     return `${card.name} is on cooldown`;
   }
   if (player.gold < card.cost) return "Not enough gold";
 
   player.gold -= card.cost;
-  if (card.kind === "unit" && player.grid[cell!] === card.id) player.levels[cell!]++;
-  else if (card.kind === "unit") {
+  if (card.kind === "unit") {
     player.grid[cell!] = card.id;
-    player.levels[cell!] = 1;
-  } else cast(battle, side, card);
+    player.levels[cell!] += 1;
+  } else {
+    cast(battle, side, card);
+  }
   player.discard.push(card.id);
   player.hand[handIndex] = draw(battle, player);
+  return null;
+}
+
+/** Clears a build cell and refunds part of the gold spent on it. Returns an error message or null. */
+export function sell(battle: Battle, side: Side, cell: number): string | null {
+  if (battle.winner !== -1) return "The match is over";
+  const player = battle.players[side];
+  if (!Number.isInteger(cell) || !player.grid[cell]) return "Nothing to sell there";
+  player.gold += sellValue(player.grid[cell], player.levels[cell]);
+  player.grid[cell] = "";
+  player.levels[cell] = 0;
   return null;
 }
 
@@ -261,25 +287,25 @@ function advance(unit: Unit): number {
 
 /** Puts a unit on the field as if spawned from a build cell. */
 export function spawnUnit(battle: Battle, side: Side, cardId: string, row: number, col = 0, index = 0, count = 1, level = 1): Unit {
-  const stats = levelStats(unitCard(cardId), level);
+  const card = unitCard(cardId);
+  const hp = scaled(card.hp, level);
   const offset = col * COLUMN_SPAWN_STEP;
   const unit: Unit = {
     id: battle.nextId++,
     side,
     card: cardId,
-    level,
     row,
     x: side === 0 ? offset : FIELD_WIDTH - offset,
     y: rowCenter(row) + (index - (count - 1) / 2) * 16,
-    hp: stats.hp,
-    maxHp: stats.hp,
-    damage: stats.damage,
+    hp,
+    maxHp: hp,
     cooldown: 0,
     hasteTicks: 0,
     hasteMultiplier: 1,
     frozenTicks: 0,
     furyTicks: 0,
     furyMultiplier: 1,
+    level,
   };
   battle.units.push(unit);
   return unit;
@@ -291,8 +317,7 @@ function spawnWave(battle: Battle): void {
     for (let cell = 0; cell < grid.length; cell++) {
       if (!grid[cell]) continue;
       const count = unitCard(grid[cell]).count ?? 1;
-      const row = (cell - (cell % COLS)) / COLS;
-      for (let i = 0; i < count; i++) spawnUnit(battle, side, grid[cell], row, cell % COLS, i, count, levels[cell]);
+      for (let i = 0; i < count; i++) spawnUnit(battle, side, grid[cell], (cell - (cell % COLS)) / COLS, cell % COLS, i, count, levels[cell]);
     }
   }
 }
@@ -326,7 +351,7 @@ export function step(battle: Battle): void {
       continue;
     }
     if (unit.breached) continue;
-    battle.players[unit.side === 0 ? 1 : 0].gold += levelStats(unitCard(unit.card), unit.level).bounty;
+    battle.players[unit.side === 0 ? 1 : 0].gold += scaled(unitCard(unit.card).bounty, unit.level);
     battle.events.push({ type: "death", id: unit.id, side: unit.side, x: unit.x, y: unit.y });
   }
   battle.units = alive;
@@ -420,18 +445,18 @@ function act(battle: Battle, unit: Unit): void {
     unit.hasteTicks--;
     speed *= unit.hasteMultiplier;
   }
-  let power = unit.damage;
+  const dir = unit.side === 0 ? 1 : -1;
+  let damage = scaled(card.damage, unit.level);
   if (unit.furyTicks > 0) {
     unit.furyTicks--;
-    power *= unit.furyMultiplier;
+    damage *= unit.furyMultiplier;
   }
-  const dir = unit.side === 0 ? 1 : -1;
 
   if (card.role === "healer") {
     const patient = mostHurtAlly(battle, unit, card.range);
     if (patient) {
       if (unit.cooldown === 0) {
-        patient.hp = Math.min(patient.maxHp, patient.hp + power);
+        patient.hp = Math.min(patient.maxHp, patient.hp + damage);
         unit.cooldown = card.attackTicks;
         battle.events.push({ type: "heal", x: unit.x, y: unit.y, tx: patient.x, ty: patient.y });
       }
@@ -456,7 +481,7 @@ function act(battle: Battle, unit: Unit): void {
         if (other.side === unit.side || other.hp <= 0) continue;
         const sx = other.x - target.x;
         const sy = other.y - target.y;
-        if (other === target || sx * sx + sy * sy <= splash * splash) other.hp -= power;
+        if (other === target || sx * sx + sy * sy <= splash * splash) other.hp -= damage;
       }
       battle.events.push({ type: "hit", id: unit.id, side: unit.side, x: unit.x, y: unit.y, tx: target.x, ty: target.y, ranged: card.range > 40, splash });
     }
@@ -470,11 +495,11 @@ function act(battle: Battle, unit: Unit): void {
   }
   // Reaching the base breaches it once; the unit is spent and pays no bounty.
   const enemy = battle.players[unit.side === 0 ? 1 : 0];
-  const damage = levelStats(card, unit.level).cost;
-  enemy.baseHp -= damage;
+  // Levels help a unit get there but not hit harder; scaling breaches made matches end in under five minutes.
+  enemy.baseHp -= card.cost;
   unit.hp = 0;
   unit.breached = true;
-  battle.events.push({ type: "breach", side: unit.side, x: baseX, y: unit.y, damage });
+  battle.events.push({ type: "breach", side: unit.side, x: baseX, y: unit.y, damage: card.cost });
 }
 
 /** Closest living enemy within range, ties going to the older unit. */

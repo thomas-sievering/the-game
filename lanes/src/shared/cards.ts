@@ -97,22 +97,6 @@ export function deckError(deck: unknown): string | null {
   return null;
 }
 
-export const MAX_LEVEL = 3;
-/** Health and damage multiplier per unit level (index level - 1). */
-export const LEVEL_SCALE = [1, 1.5, 2];
-
-/** A unit card's health, damage, breach damage and bounty at a level; rounded so HP stays whole. */
-export function levelStats(card: UnitCard, level: number) {
-  const scale = LEVEL_SCALE[level - 1] ?? 1;
-  return {
-    hp: Math.round(card.hp * scale),
-    damage: Math.round(card.damage * scale),
-    /** Gold put into the cell: the card is played once per level. */
-    cost: card.cost * level,
-    bounty: card.bounty * level,
-  };
-}
-
 export function unitCard(id: string): UnitCard {
   const card = CARDS[id];
   if (card?.kind !== "unit") throw new Error(`Not a unit card: ${id}`);
