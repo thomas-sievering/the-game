@@ -43,6 +43,7 @@ export const UnitState = schema(
     maxHp: t.number(),
     hasted: t.boolean().default(false),
     frozen: t.boolean().default(false),
+    fury: t.boolean().default(false),
     level: t.uint8().default(1),
   },
   "UnitState",

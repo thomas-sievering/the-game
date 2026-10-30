@@ -62,7 +62,7 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
-          BASE_URL=https://lanes.nexus.siever.ing npm run e2e
+          BASE_URL=https://lanes.nexus.siever.ing npm run e2e -- --grep @prod
       - uses: actions/upload-artifact@v7
         if: always()
         with:

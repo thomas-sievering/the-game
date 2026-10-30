@@ -238,7 +238,7 @@ function cardHtml(card: Card, slot: number | null, cooldown: number): string {
   );
 }
 
-const SPELL_ICONS: Record<string, string> = { rally: "»", lightning: "ϟ", mend: "✚", frost: "❄" };
+const SPELL_ICONS: Record<string, string> = { rally: "»", lightning: "ϟ", mend: "✚", frost: "❄", meteor: "☄", fury: "‼", muster: "⚑" };
 
 /** Same silhouettes as on the battlefield. */
 function roleIcon(role: Role): string {
@@ -471,6 +471,9 @@ main();
   },
   get grid() {
     return [...(me()?.grid ?? [])];
+  },
+  get levels() {
+    return [...(me()?.levels ?? [])];
   },
   get side() {
     return me()?.side ?? -1;
