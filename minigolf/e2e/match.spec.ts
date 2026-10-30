@@ -79,7 +79,8 @@ test("two players create, join and finish hole 1", async ({ browser }) => {
   for (const page of [alice, bob]) {
     const stats = await golf(page, (g) => g.stats);
     expect(stats.shots).toBeGreaterThan(0);
-    expect(stats.checks).toBeGreaterThan(0);
+    // Holed balls are not compared, so a hole-in-one hole may leave nothing to check.
+    if (hole.solution.length > 1) expect(stats.checks).toBeGreaterThan(0);
     expect(stats.desyncs).toBe(0);
   }
   // Idle pages keep animating and slow down later tests on CI.
