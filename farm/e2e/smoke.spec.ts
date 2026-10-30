@@ -12,6 +12,7 @@ type Farm = {
   spectating: boolean;
   watching: string | null;
   tileOnScreen: (tile: number) => { x: number; y: number };
+  send: (type: string, message: unknown) => void;
 };
 
 const shots = (name: string) => `${process.env.SCREENSHOT_DIR ?? "artifacts/e2e"}/${name}.png`;
@@ -67,6 +68,16 @@ test("two farmers buy land, grow, sell, fill an order and sabotage", async ({ br
   await expect.poll(async () => (await tileState(bob, mirror(bought))).crop).toBe("wheat");
   await alice.screenshot({ path: shots("2-planted") });
   await bob.screenshot({ path: shots("3-planted-bob") });
+
+  // Hovering a growing crop explains its speed; hovering the well tool explains it.
+  const point = await farm(alice, (f, t) => f.tileOnScreen(t), tileAt(0, 1));
+  await alice.mouse.move(point.x, point.y);
+  await expect(alice.locator("#tip")).toContainText(/ripe in about \d+ s/);
+  await expect(alice.locator("#tip")).toContainText("Dry");
+  await alice.screenshot({ path: shots("2b-tile-tip") });
+  await alice.locator('.tool[data-tool="well"]').hover();
+  await expect(alice.locator("#tip")).toContainText("Waters the 8 tiles");
+  await alice.screenshot({ path: shots("2c-tool-tip") });
 
   // Wheat next to the pond ripens in 20 s; the dry tiles take twice as long.
   const wet = [tileAt(1, 0), tileAt(1, 1), bought];

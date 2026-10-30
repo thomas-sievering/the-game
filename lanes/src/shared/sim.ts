@@ -45,6 +45,8 @@ export interface Unit {
   hasteTicks: number;
   hasteMultiplier: number;
   frozenTicks: number;
+  furyTicks: number;
+  furyMultiplier: number;
   /** 1 to MAX_LEVEL; scales health, damage and bounty. */
   level: number;
   breached?: boolean;
@@ -246,6 +248,31 @@ function cast(battle: Battle, side: Side, card: SpellCard): void {
   } else if (effect.type === "freeze") {
     hit = theirs;
     for (const u of hit) u.frozenTicks = effect.ticks;
+  } else if (effect.type === "fury") {
+    hit = mine;
+    for (const u of hit) {
+      u.furyTicks = effect.ticks;
+      u.furyMultiplier = effect.multiplier;
+    }
+  } else if (effect.type === "meteor") {
+    const r2 = effect.radius * effect.radius;
+    const near = (a: Unit, b: Unit) => (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) <= r2;
+    let center: Unit | null = null;
+    let best = 0;
+    for (const u of theirs) {
+      let crowd = 0;
+      for (const other of theirs) if (near(u, other)) crowd++;
+      if (crowd > best || (crowd === best && center && advance(u) > advance(center))) {
+        center = u;
+        best = crowd;
+      }
+    }
+    if (center) for (const u of theirs) if (near(center, u)) u.hp -= effect.damage;
+    // A single impact point; the renderer draws the blast radius around it.
+    battle.events.push({ type: "spell", side, card: card.id, points: center ? [[center.x, center.y]] : [] });
+    return;
+  } else if (effect.type === "summon") {
+    for (let row = 0; row < ROWS; row++) hit.push(spawnUnit(battle, side, effect.card, row, COLS - 1));
   } else {
     hit = theirs.sort((a, b) => advance(b) - advance(a) || a.id - b.id).slice(0, effect.targets);
     for (const u of hit) u.hp -= effect.damage;
@@ -276,6 +303,8 @@ export function spawnUnit(battle: Battle, side: Side, cardId: string, row: numbe
     hasteTicks: 0,
     hasteMultiplier: 1,
     frozenTicks: 0,
+    furyTicks: 0,
+    furyMultiplier: 1,
     level,
   };
   battle.units.push(unit);
@@ -417,7 +446,11 @@ function act(battle: Battle, unit: Unit): void {
     speed *= unit.hasteMultiplier;
   }
   const dir = unit.side === 0 ? 1 : -1;
-  const damage = scaled(card.damage, unit.level);
+  let damage = scaled(card.damage, unit.level);
+  if (unit.furyTicks > 0) {
+    unit.furyTicks--;
+    damage *= unit.furyMultiplier;
+  }
 
   if (card.role === "healer") {
     const patient = mostHurtAlly(battle, unit, card.range);

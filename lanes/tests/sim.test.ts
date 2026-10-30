@@ -159,6 +159,8 @@ describe("placement and waves", () => {
     const battle = createBattle();
     give(battle, 0, "footman");
     play(battle, 0, 0, 5);
+    give(battle, 0, "footman");
+    play(battle, 0, 0, 5);
     give(battle, 0, "brute");
     expect(play(battle, 0, 0, 5)).toMatch(/sell it first/);
     expect(battle.players[0].grid[5]).toBe("footman");
@@ -333,6 +335,57 @@ describe("spells", () => {
     run(fast, 20);
     expect(b.x).toBeCloseTo(a.x * 1.5);
     expect(b.x).toBeGreaterThan(a.x);
+  });
+
+  it("a levelled unit breaches for its card cost and pays a bigger bounty", () => {
+    const battle = createBattle();
+    spawnUnit(battle, 0, "brute", 0, 0, 0, 1, 2).x = FIELD_WIDTH - 1;
+    run(battle, 5);
+    expect(battle.players[1].baseHp).toBe(BASE_HP - unitCard("brute").cost);
+
+    const fight = createBattle();
+    const victim = spawnUnit(fight, 1, "footman", 0, 0, 0, 1, 3);
+    victim.hp = 0;
+    const gold = fight.players[0].gold;
+    step(fight);
+    expect(fight.players[0].gold).toBe(gold + scaled(unitCard("footman").bounty, 3));
+  });
+
+  it("meteor hits the biggest enemy group and spares a lone unit", () => {
+    const battle = createBattle();
+    const lone = spawnUnit(battle, 1, "brute", 0);
+    lone.x = 900;
+    const group = [0, 1, 2].map(() => spawnUnit(battle, 1, "brute", 2));
+    group.forEach((u, i) => (u.x = 500 + i * 20));
+    give(battle, 0, "meteor");
+    expect(play(battle, 0, 0)).toBeNull();
+    for (const u of group) expect(u.hp).toBeLessThan(u.maxHp);
+    expect(lone.hp).toBe(lone.maxHp);
+  });
+
+  it("fury doubles damage for a while", () => {
+    const hitFor = (fury: boolean) => {
+      const battle = createBattle();
+      const attacker = spawnUnit(battle, 0, "footman", 1);
+      const target = spawnUnit(battle, 1, "brute", 1);
+      attacker.x = 600;
+      Object.assign(target, { x: 620, frozenTicks: 1e6 });
+      if (fury) {
+        give(battle, 0, "fury");
+        play(battle, 0, 0);
+      }
+      step(battle);
+      return target.maxHp - target.hp;
+    };
+    expect(hitFor(false)).toBe(unitCard("footman").damage);
+    expect(hitFor(true)).toBe(unitCard("footman").damage * 2);
+  });
+
+  it("muster spawns a unit in every lane", () => {
+    const battle = createBattle();
+    give(battle, 0, "muster");
+    expect(play(battle, 0, 0)).toBeNull();
+    expect(battle.units.map((u) => [u.side, u.card, u.y])).toEqual([0, 1, 2].map((row) => [0, "footman", rowCenter(row)]));
   });
 
   it("frost freezes enemies and mend heals allies", () => {

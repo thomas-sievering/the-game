@@ -10,20 +10,28 @@ import {
   CROP_IDS,
   type CropId,
   DRAW,
+  BARN_CAPACITY,
+  CONTRACTS,
+  CROWS,
   DUMP,
   type Fx,
+  GROWTH_FULL,
   LAND,
+  MARKET,
   MATCH_TICKS,
   ROWS,
   SABOTAGE,
   type SabotageId,
   TICK_RATE,
+  WEEDS_TICKS,
+  rateFor,
+  tileAt,
   tileX,
   tileY,
 } from "../shared/sim";
 import { FarmState, type PlayerState, type TileState } from "../shared/state";
 import { isMuted, sfx, toggleMute } from "./audio";
-import { CROP_ICONS, Renderer } from "./render";
+import { CROP_ICONS, PALETTE, Renderer } from "./render";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -38,6 +46,12 @@ const TOOLS: Tool[] = [...CROP_IDS, ...BUILDING_IDS];
 const BUILDING_ICONS: Record<BuildingId, string> = { well: "🪣", scarecrow: "🧑‍🌾", silo: "🛢️" };
 const SABOTAGE_ICONS: Record<SabotageId, string> = { crows: "🐦‍⬛", weeds: "🌿", dump: "📉" };
 const HISTORY_LENGTH = 60;
+/** Longer help shown in a building's tooltip. */
+const BUILDING_HELP: Record<BuildingId, string> = {
+  well: "Waters the 8 tiles around it, diagonals included. Crops on dry (cracked) soil grow at half speed, so a well doubles their speed.",
+  scarecrow: `Crows can't eat crops within ${CROWS.scarecrowRange} tiles of it (a 5×5 square).`,
+  silo: `Your barn holds ${BARN_CAPACITY} more crops. Harvesting stops when the barn is full.`,
+};
 
 let room: Room<any, FarmState> | null = null;
 let tool: Tool = "wheat";
@@ -54,6 +68,9 @@ let watchSide = 0;
 /** Recent moves of both farmers, newest first, shown to spectators. */
 let feed: { side: number; text: string }[] = [];
 const FEED_LENGTH = 8;
+/** The panel element under the mouse whose data-tip is showing, if any. */
+let tipTarget: HTMLElement | null = null;
+let mouse = { x: 0, y: 0 };
 
 function show(screen: "home" | "lobby" | "game") {
   $("home").classList.toggle("hidden", screen !== "home");
@@ -125,7 +142,14 @@ function render() {
   sampleHistory(s);
   if (shown) {
     $("coins").textContent = `${shown.coins} coins`;
-    $("barn-size").textContent = `Barn ${barnCount(shown)}/${shown.capacity}`;
+    const stored = barnCount(shown);
+    const silos = [...s.tiles].filter((t) => t.owner === shown.side && t.building === "silo").length;
+    $("barn-size").textContent = `Barn ${stored}/${shown.capacity}`;
+    $("barn-size").classList.toggle("full", stored >= shown.capacity);
+    $("barn-size").dataset.tip =
+      `<b>Barn ${stored}/${shown.capacity}</b><div class="tip-row">Harvested crops wait here until you sell them or deliver an order.</div>` +
+      `<div class="tip-row">Holds ${BARN_CAPACITY}, plus ${BARN_CAPACITY} per silo. You have ${silos} silo${silos === 1 ? "" : "s"}.</div>` +
+      (stored >= shown.capacity ? `<div class="tip-warn">Full: you can't harvest until you sell.</div>` : "");
     if (self) renderTools(self);
     else renderVersus(s, shown);
     renderMarket(s, shown, !self);
@@ -134,6 +158,7 @@ function render() {
   }
   renderer.setTiles([...s.tiles]);
   updateHint();
+  refreshTip();
 
   $("result").classList.toggle("hidden", s.phase !== "finished");
   if (s.phase === "finished" && !$("result").dataset.shown) {
@@ -223,7 +248,39 @@ function renderTools(self: PlayerState) {
     const t = button.dataset.tool as Tool;
     button.classList.toggle("selected", t === tool && !aimingWeeds);
     button.classList.toggle("poor", self.coins < cost(t));
+    button.dataset.tip = toolTip(t, self);
   }
+}
+
+/** Seconds a crop takes from seed to ripe on a tile like this. */
+function growSeconds(crop: CropId, terrain: string, wet: boolean, weeds = false): number {
+  return Math.ceil((CROPS[crop].growTicks * GROWTH_FULL) / rateFor(terrain, wet, weeds) / TICK_RATE);
+}
+
+function toolTip(t: Tool, self: PlayerState): string {
+  const key = `<span class="tip-key">${TOOLS.indexOf(t) + 1}</span>`;
+  const poor = self.coins < cost(t) ? `<div class="tip-warn">You need ${cost(t)} coins.</div>` : "";
+  if (t in CROPS) {
+    const crop = CROPS[t as CropId];
+    const now = room?.state.prices.get(crop.id) ?? crop.price;
+    const regrow = crop.regrowTicks
+      ? `<div class="tip-row">Grows back ${crop.regrowTicks / TICK_RATE} s after each harvest, no replanting.</div>`
+      : "";
+    return (
+      `<b>${CROP_ICONS[crop.id]} ${crop.name} seed · ${crop.seed} coins</b>${key}` +
+      `<div class="tip-row">Ripe in ${growSeconds(crop.id, "grass", true)} s watered, ${growSeconds(crop.id, "grass", false)} s dry, ` +
+      `${growSeconds(crop.id, "rich", true)} s on watered rich soil.</div>` +
+      regrow +
+      `<div class="tip-row">Sells for ${now} now (normally ${crop.price}).</div>` +
+      `<div class="tip-muted">Click one of your empty plots to plant.</div>${poor}`
+    );
+  }
+  const b = BUILDINGS[t as BuildingId];
+  return (
+    `<b>${BUILDING_ICONS[b.id]} ${b.name} · ${b.cost} coins</b>${key}<div class="tip-row">${BUILDING_HELP[b.id]}</div>` +
+    `<div class="tip-muted">Uses a plot and can't be removed. Adds ${b.cost / 2} to your net worth. ` +
+    `Hover your land to preview it.</div>${poor}`
+  );
 }
 
 function sampleHistory(s: FarmState) {
@@ -256,13 +313,28 @@ function renderMarket(s: FarmState, self: PlayerState, readOnly: boolean) {
     priceEl.classList.toggle("low", price < CROPS[crop].price * 0.75);
     priceEl.classList.toggle("frozen", !!s.frozen.get(crop));
     row.querySelector(".spark")!.innerHTML = sparkline(crop);
+    row.querySelector<HTMLElement>(".info")!.dataset.tip =
+      `<b>${CROP_ICONS[crop]} ${CROPS[crop].name}: ${price} coins</b>` +
+      `<div class="tip-row">Normal price ${CROPS[crop].price}. Every unit anyone sells drops it ${MARKET.dropPerUnit / 10}% for both of you, ` +
+      `down to ${MARKET.floor / 10}%; it recovers over about ${Math.ceil((MARKET.full - MARKET.floor) / MARKET.recoverPerTick / TICK_RATE)} s.</div>` +
+      (s.frozen.get(crop) ? `<div class="tip-warn">❄ Frozen by a market dump.</div>` : "") +
+      `<div class="tip-muted">The line shows the last minute.</div>`;
     const sell = row.querySelector<HTMLButtonElement>("button.sell")!;
     sell.disabled = readOnly || stock === 0;
     sell.textContent = stock ? `Sell ${stock}` : "Sell";
-    sell.title = stock ? `Sell all ${stock} for about ${estimate(price, CROPS[crop].price, stock)} coins` : "";
+    sell.dataset.tip = stock
+      ? `<b>Sell all ${stock} for about ${estimate(price, CROPS[crop].price, stock)} coins</b>` +
+        `<div class="tip-muted">The price drops with each unit sold, then recovers.</div>`
+      : `You have no ${CROPS[crop].name.toLowerCase()} to sell.`;
     const dump = row.querySelector<HTMLButtonElement>("button.dump")!;
     dump.disabled = readOnly || stock < DUMP.units || dumpReady > 0 || self.coins < SABOTAGE.dump.cost;
-    dump.title = `${SABOTAGE.dump.text} Costs ${SABOTAGE.dump.cost} coins.${dumpReady > 0 ? ` Ready in ${Math.ceil(dumpReady / TICK_RATE)} s.` : ""}`;
+    dump.dataset.tip =
+      `<b>${SABOTAGE_ICONS.dump} Market dump · ${SABOTAGE.dump.cost} coins</b>` +
+      `<div class="tip-row">Throw away ${DUMP.units} ${CROPS[crop].name.toLowerCase()} to crash its price to ${MARKET.floor / 10}% ` +
+      `and freeze it there for ${DUMP.freezeTicks / TICK_RATE} s.</div>` +
+      `<div class="tip-muted">Cooldown ${SABOTAGE.dump.cooldownTicks / TICK_RATE} s.</div>` +
+      (dumpReady > 0 ? `<div class="tip-warn">Ready in ${Math.ceil(dumpReady / TICK_RATE)} s.</div>` : "") +
+      (stock < DUMP.units ? `<div class="tip-warn">You need ${DUMP.units} in your barn.</div>` : "");
   }
 }
 
@@ -306,6 +378,12 @@ function renderContracts(s: FarmState, self: PlayerState, readOnly: boolean) {
       })
       .join(" ");
     el.querySelector<HTMLButtonElement>(".deliver")!.disabled = readOnly || !ready;
+    const worth = [...contract.items].reduce((sum, item) => sum + (s.prices.get(item.crop) ?? 0) * item.count, 0);
+    el.dataset.tip =
+      `<b>Order: ${contract.reward} coins</b>` +
+      `<div class="tip-row">Pays ${CONTRACTS.bonus}% of the normal price. Selling the same goods now would bring about ${worth}.</div>` +
+      `<div class="tip-muted">The first farmer to deliver gets it.</div>` +
+      (ready ? "" : `<div class="tip-warn">Not enough in your barn yet.</div>`);
     el.querySelector(".left")!.textContent = `${Math.max(0, Math.ceil((contract.expiresAt - s.tick) / TICK_RATE))} s`;
   }
 }
@@ -317,6 +395,15 @@ function renderSabotage(s: FarmState, self: PlayerState, readOnly: boolean) {
     button.disabled = readOnly || wait > 0 || self.coins < SABOTAGE[id].cost;
     button.classList.toggle("armed", id === "weeds" && aimingWeeds);
     button.querySelector(".state")!.textContent = wait > 0 ? `${Math.ceil(wait / TICK_RATE)} s` : `${SABOTAGE[id].cost}`;
+    const how =
+      id === "crows"
+        ? `Eat the crops on ${CROWS.count} random enemy tiles, ripe ones first. Crops within ${CROWS.scarecrowRange} tiles of their scarecrow are safe.`
+        : `Click, then pick a 2×2 patch of enemy land. Those crops grow at half speed for ${WEEDS_TICKS / TICK_RATE} s unless they pull the weeds tile by tile.`;
+    button.dataset.tip =
+      `<b>${SABOTAGE_ICONS[id]} ${SABOTAGE[id].name} · ${SABOTAGE[id].cost} coins</b><span class="tip-key">${id[0].toUpperCase()}</span>` +
+      `<div class="tip-row">${how}</div><div class="tip-muted">Cooldown ${SABOTAGE[id].cooldownTicks / TICK_RATE} s.</div>` +
+      (wait > 0 ? `<div class="tip-warn">Ready in ${Math.ceil(wait / TICK_RATE)} s.</div>` : "") +
+      (self.coins < SABOTAGE[id].cost ? `<div class="tip-warn">You need ${SABOTAGE[id].cost} coins.</div>` : "");
   }
 }
 
@@ -382,7 +469,93 @@ function describe(index: number): string {
   return parts.join(" · ");
 }
 
+/** Tiles within a square radius of a tile, the tile itself included. */
+function around(index: number, radius: number): number[] {
+  const out: number[] = [];
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const x = tileX(index) + dx;
+      const y = tileY(index) + dy;
+      if (x >= 0 && x < COLS && y >= 0 && y < ROWS) out.push(tileAt(x, y));
+    }
+  }
+  return out;
+}
+
+const TERRAIN_NAMES: Record<string, string> = { grass: "Grass", rich: "Rich soil", rock: "Rock", pond: "Pond" };
+
+/** The card shown next to the cursor while hovering a tile. */
+function tileTip(index: number): string {
+  const t = tile(index);
+  const self = me();
+  const s = room?.state;
+  if (!t || !s) return "";
+  const side = self?.side ?? 0;
+  const whose = t.owner === -1 ? "neutral" : t.owner === side ? (self ? "yours" : "left farmer") : self ? "theirs" : "right farmer";
+  const rows: string[] = [];
+  const row = (text: string, cls = "tip-row") => rows.push(`<div class="${cls}">${text}</div>`);
+  if (t.terrain === "pond") row("Can't be bought or planted. Waters the 8 tiles around it.");
+  else if (t.terrain === "rock") row(`Clear it for ${LAND.clear} coins before you can plant or build.`);
+  if (t.crop) {
+    const crop = CROPS[t.crop as CropId];
+    if (t.growth >= 100) row(`${CROP_ICONS[crop.id]} <b>Ripe ${crop.name.toLowerCase()}</b> · sells for ${s.prices.get(crop.id) ?? crop.price}`);
+    else {
+      const left = Math.ceil(((100 - t.growth) / 100) * growSeconds(crop.id, t.terrain, t.wet, t.weeds));
+      row(`${CROP_ICONS[crop.id]} ${crop.name} ${t.growth}% · ripe in about ${left} s`);
+    }
+  }
+  if (t.building) {
+    const b = t.building as BuildingId;
+    row(`${BUILDING_ICONS[b]} <b>${BUILDINGS[b].name}</b>: ${BUILDING_HELP[b]}`);
+  }
+  if (t.terrain !== "pond" && t.terrain !== "rock" && !t.building) {
+    const factors: string[] = [];
+    if (t.terrain === "rich") factors.push("rich soil ×1.5");
+    factors.push(t.wet ? "watered" : "dry ×½");
+    if (t.weeds) factors.push("weeds ×½");
+    const speed = rateFor(t.terrain, t.wet, t.weeds) / rateFor("grass", true, false);
+    row(`Growth speed ${speed === 1 ? "normal" : `×${speed}`} (${factors.join(", ")})`);
+    const byWell = around(index, 1).some((n) => n !== index && tile(n)?.building === "well");
+    if (t.wet) row(`Watered by ${byWell ? "a well" : "a pond"} next to it.`, "tip-muted");
+    else row("Dry: a pond or well next to it would double the speed.", "tip-warn");
+    if (t.weeds) row(t.owner === side && self ? "Weeds! Click to pull them." : "Weeds slow this tile down.", "tip-warn");
+  }
+  if (t.owner !== -1 && t.crop) {
+    const safe = around(index, CROWS.scarecrowRange).some((n) => tile(n)?.owner === t.owner && tile(n)?.building === "scarecrow");
+    if (safe) row("🧑‍🌾 Safe from crows.", "tip-muted");
+  }
+  if (t.owner !== -1) {
+    if (t.home) row(`Starting land, worth ${t.value}. Can't be bought out.`, "tip-muted");
+    else if (t.building) row(`Worth ${t.value}. Land with a building can't be bought out.`, "tip-muted");
+    else if (t.guarded) row(`Worth ${t.value}. Just bought out, safe for now.`, "tip-muted");
+    else row(`Worth ${t.value}. Buyout price ${t.value * BUYOUT.factor}.`, "tip-muted");
+  } else if (t.terrain !== "pond" && self) {
+    const price = LAND.base + self.bought * LAND.step + (t.terrain === "rich" ? LAND.rich : 0);
+    row(`Costs ${price} coins. You can buy land that touches yours (not diagonally).`, "tip-muted");
+  }
+  const action = actionFor(index);
+  const click = action ? `<div class="tip-action">Click: ${action.text}</div>` : "";
+  return `<b>${TERRAIN_NAMES[t.terrain] ?? t.terrain} · ${whose}</b>${rows.join("")}${click}`;
+}
+
+/** What hovering a tile highlights: a well's water, a scarecrow's cover or the weeds patch. */
+function previewFor(index: number): { tiles: number[]; color: number } | null {
+  const t = tile(index);
+  if (index === -1 || !t) return null;
+  if (aimingWeeds) {
+    const x = Math.min(tileX(index), COLS - 2);
+    const y = Math.min(tileY(index), ROWS - 2);
+    const patch = [tileAt(x, y), tileAt(x + 1, y), tileAt(x, y + 1), tileAt(x + 1, y + 1)];
+    return { tiles: patch.filter((n) => tile(n)?.owner === 1 - (me()?.side ?? 0)), color: PALETTE.weeds };
+  }
+  const building = actionFor(index)?.type === "build" ? tool : t.building;
+  if (building === "well") return { tiles: around(index, 1).filter((n) => n !== index && tile(n)?.terrain !== "pond"), color: PALETTE.pond };
+  if (building === "scarecrow") return { tiles: around(index, CROWS.scarecrowRange), color: PALETTE.wheat };
+  return null;
+}
+
 function updateHint() {
+  renderer.preview = previewFor(hovered);
   if (aimingWeeds) {
     $("hint").textContent = "Click enemy land to sow a 2×2 patch of weeds · Esc to cancel";
     return;
@@ -390,6 +563,21 @@ function updateHint() {
   const action = hovered === -1 ? null : actionFor(hovered);
   const info = hovered === -1 ? "" : describe(hovered);
   $("hint").textContent = [action?.text, info].filter(Boolean).join(" — ");
+}
+
+/** Shows the tooltip for the panel element or board tile under the mouse, next to the cursor. */
+function refreshTip() {
+  const tip = $("tip");
+  if (tipTarget && !document.body.contains(tipTarget)) tipTarget = null;
+  const html = tipTarget ? (tipTarget.dataset.tip ?? "") : hovered !== -1 && room?.state.phase === "playing" ? tileTip(hovered) : "";
+  tip.classList.toggle("hidden", !html);
+  if (!html) return;
+  if (tip.innerHTML !== html) tip.innerHTML = html;
+  const pad = 14;
+  const x = mouse.x + pad + tip.offsetWidth > innerWidth ? mouse.x - pad - tip.offsetWidth : mouse.x + pad;
+  const y = mouse.y + pad + tip.offsetHeight > innerHeight ? mouse.y - pad - tip.offsetHeight : mouse.y + pad;
+  tip.style.left = `${Math.max(4, x)}px`;
+  tip.style.top = `${Math.max(4, y)}px`;
 }
 
 function clickTile(index: number) {
@@ -496,9 +684,6 @@ function buildPanel() {
     const crop = t in CROPS;
     const icon = crop ? CROP_ICONS[t as CropId] : BUILDING_ICONS[t as BuildingId];
     const name = crop ? CROPS[t as CropId].name : BUILDINGS[t as BuildingId].name;
-    button.title = crop
-      ? `${CROPS[t as CropId].growTicks / TICK_RATE} s to grow, sells for ${CROPS[t as CropId].price}${CROPS[t as CropId].regrowTicks ? ", grows back after harvest" : ""}`
-      : BUILDINGS[t as BuildingId].text;
     button.innerHTML = `<span class="key">${i + 1}</span><span class="icon">${icon}</span><span>${name}</span><span class="cost">${cost(t)}</span>`;
     button.onclick = () => selectTool(t);
     $("tools").appendChild(button);
@@ -506,9 +691,9 @@ function buildPanel() {
 
   $("market").innerHTML = CROP_IDS.map(
     (id) =>
-      `<div class="market-row" data-crop="${id}"><span class="icon">${CROP_ICONS[id]}</span>` +
+      `<div class="market-row" data-crop="${id}"><span class="info"><span class="icon">${CROP_ICONS[id]}</span>` +
       `<span><div class="name">${CROPS[id].name}</div><div class="stock"></div></span>` +
-      `<span><div class="price"></div><div class="spark"></div></span>` +
+      `<span><div class="price"></div><div class="spark"></div></span></span>` +
       `<span class="actions"><button class="sell"></button><button class="dump">${SABOTAGE_ICONS.dump}</button></span></div>`,
   ).join("");
   for (const row of $("market").children as HTMLCollectionOf<HTMLElement>) {
@@ -520,7 +705,6 @@ function buildPanel() {
   for (const id of ["crows", "weeds"] as const) {
     const button = document.createElement("button");
     button.dataset.id = id;
-    button.title = SABOTAGE[id].text;
     button.innerHTML = `<span>${SABOTAGE_ICONS[id]} ${SABOTAGE[id].name} <span class="muted">(${id[0].toUpperCase()})</span></span><span class="state"></span>`;
     button.onclick = () => (id === "crows" ? room?.send("sabotage", { id }) : aim(!aimingWeeds));
     $("sabotage").appendChild(button);
@@ -535,7 +719,13 @@ function main() {
   renderer.onHover = (index) => {
     hovered = index;
     updateHint();
+    refreshTip();
   };
+  window.addEventListener("mousemove", (e) => {
+    mouse = { x: e.clientX, y: e.clientY };
+    tipTarget = e.target instanceof Element ? e.target.closest<HTMLElement>("[data-tip]") : null;
+    refreshTip();
+  });
   buildPanel();
   // Spectators click the other farmer's name to follow them instead.
   document.querySelector<HTMLElement>('.farmer[data-who="them"]')!.onclick = () => {
