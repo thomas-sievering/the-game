@@ -89,6 +89,11 @@ export const SABOTAGE: Record<SabotageId, Sabotage> = {
   dump: { id: "dump", name: "Market dump", cost: 20, cooldownTicks: 45 * TICK_RATE, text: "Throw away 3 of a crop to crash its price for 20 s." },
 };
 export const SABOTAGE_IDS = Object.keys(SABOTAGE) as SabotageId[];
+
+// Ids arrive from clients: only exact known strings count, never arrays or inherited keys like "constructor".
+const isCrop = (id: unknown): id is CropId => typeof id === "string" && (CROP_IDS as string[]).includes(id);
+const isBuilding = (id: unknown): id is BuildingId => typeof id === "string" && (BUILDING_IDS as string[]).includes(id);
+const isSabotage = (id: unknown): id is SabotageId => typeof id === "string" && (SABOTAGE_IDS as string[]).includes(id);
 export const WEEDS_TICKS = 30 * TICK_RATE;
 export const DUMP = { units: 3, freezeTicks: 20 * TICK_RATE };
 export const CROWS = { count: 3, scarecrowRange: 2 };
@@ -329,7 +334,7 @@ export function buy(farm: Farm, side: Side, tile: number): Result {
   if (paid) return paid;
   farm.players[t.owner as Side].coins += t.value;
   // The crop changes hands with the land.
-  Object.assign(t, { owner: side, protectedUntil: farm.tick + BUYOUT.protectTicks });
+  Object.assign(t, { owner: side, value: cost, protectedUntil: farm.tick + BUYOUT.protectTicks });
   player.ready.buyout = farm.tick + BUYOUT.cooldownTicks;
   farm.events.push({ type: "buyout", side, tile, cost });
   return null;
@@ -350,10 +355,13 @@ export function plant(farm: Farm, side: Side, tile: number, crop: CropId): Resul
   const error = owned(farm, side, tile);
   if (error) return error;
   const t = farm.tiles[tile];
-  if (!CROPS[crop]) return "Unknown crop";
+  if (!isCrop(crop)) return "Unknown crop";
   if (t.terrain === "rock") return "Clear the rock first";
   if (t.crop || t.building) return "That tile is in use";
-  const paid = pay(farm.players[side], CROPS[crop].seed);
+  const player = farm.players[side];
+  // A broke farmer with nothing growing or stored gets wheat seed for free, so nobody gets stuck.
+  const stuck = crop === "wheat" && player.coins < CROPS.wheat.seed && barnCount(player) === 0 && !farm.tiles.some((o) => o.owner === side && o.crop);
+  const paid = stuck ? null : pay(player, CROPS[crop].seed);
   if (paid) return paid;
   Object.assign(t, { crop, growth: 0 });
   return null;
@@ -379,7 +387,7 @@ export function build(farm: Farm, side: Side, tile: number, building: BuildingId
   const error = owned(farm, side, tile);
   if (error) return error;
   const t = farm.tiles[tile];
-  if (!BUILDINGS[building]) return "Unknown building";
+  if (!isBuilding(building)) return "Unknown building";
   if (t.terrain === "rock") return "Clear the rock first";
   if (t.crop || t.building) return "That tile is in use";
   const paid = pay(farm.players[side], BUILDINGS[building].cost);
@@ -400,7 +408,7 @@ export function weed(farm: Farm, side: Side, tile: number): Result {
 /** Sells crops one by one; each unit sold lowers the price for both players. */
 export function sell(farm: Farm, side: Side, crop: CropId, count: number): Result {
   if (farm.winner !== -1) return "The match is over";
-  if (!CROPS[crop]) return "Unknown crop";
+  if (!isCrop(crop)) return "Unknown crop";
   const player = farm.players[side];
   const n = Math.min(Math.floor(count), player.barn[crop]);
   if (!(n > 0)) return "You have none to sell";
@@ -432,8 +440,8 @@ export function fill(farm: Farm, side: Side, contractId: number): Result {
 /** Crows need no target, weeds target the top-left tile of a 2×2 patch, a dump targets a crop. */
 export function sabotage(farm: Farm, side: Side, id: SabotageId, target?: number | CropId): Result {
   if (farm.winner !== -1) return "The match is over";
+  if (!isSabotage(id)) return "Unknown sabotage";
   const spec = SABOTAGE[id];
-  if (!spec) return "Unknown sabotage";
   const player = farm.players[side];
   if (player.ready[id] > farm.tick) return `${spec.name} is on cooldown`;
   if (player.coins < spec.cost) return `You need ${spec.cost} coins`;
@@ -462,7 +470,7 @@ export function sabotage(farm: Farm, side: Side, id: SabotageId, target?: number
     for (const tile of tiles) farm.tiles[tile].weedsUntil = farm.tick + WEEDS_TICKS;
   } else {
     const crop = target as CropId;
-    if (!CROPS[crop]) return "Pick a crop to dump";
+    if (!isCrop(crop)) return "Pick a crop to dump";
     if (player.barn[crop] < DUMP.units) return `You need ${DUMP.units} ${CROPS[crop].name.toLowerCase()} to dump`;
     player.barn[crop] -= DUMP.units;
     farm.market[crop] = MARKET.floor;
@@ -518,7 +526,8 @@ export function netWorth(farm: Farm, side: Side): number {
     if (t.owner !== side) continue;
     worth += t.value;
     if (t.building) worth += BUILDINGS[t.building].cost / 2;
-    if (t.crop) worth += isRipe(t) ? price(farm, t.crop) : CROPS[t.crop].seed;
+    // A crop is worth its market price in proportion to how far it has grown.
+    if (t.crop) worth += Math.floor((price(farm, t.crop) * t.growth) / (CROPS[t.crop].growTicks * GROWTH_FULL));
   }
   return worth;
 }

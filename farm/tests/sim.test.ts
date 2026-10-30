@@ -140,7 +140,9 @@ describe("buyouts", () => {
     const before = farm.players.map((p) => p.coins);
     expect(buyoutPrice(farm, tile)).toBe(60);
     expect(buy(farm, 0, tile)).toBeNull();
-    expect(farm.tiles[tile]).toMatchObject({ owner: 0, value: 30, crop: "pumpkin" });
+    // The tile is now worth what the buyer paid, so buying it back costs twice that.
+    expect(farm.tiles[tile]).toMatchObject({ owner: 0, value: 60, crop: "pumpkin" });
+    expect(buyoutPrice(farm, tile)).toBe(120);
     expect(farm.players[0].coins).toBe(before[0] - 60);
     expect(farm.players[1].coins).toBe(before[1] + 30);
     expect(farm.events.at(-1)).toMatchObject({ type: "buyout", side: 0, tile });
@@ -232,6 +234,31 @@ describe("crops", () => {
     build(farm, 0, tileAt(1, 1), "silo");
     expect(capacity(farm, 0)).toBe(2 * BARN_CAPACITY);
     expect(harvest(farm, 0, tile)).toBeNull();
+  });
+
+  it("rejects ids that aren't plain known names", () => {
+    const farm = rich(plainFarm());
+    const coins = farm.players[0].coins;
+    for (const bad of [["wheat"], "constructor", "__proto__", "toString", 3, null]) {
+      expect(plant(farm, 0, tileAt(0, 0), bad as never)).toMatch(/Unknown/);
+      expect(build(farm, 0, tileAt(0, 0), bad as never)).toMatch(/Unknown/);
+      expect(sell(farm, 0, bad as never, 1)).toMatch(/Unknown/);
+      expect(sabotage(farm, 0, bad as never)).toMatch(/Unknown/);
+      expect(sabotage(farm, 0, "dump", bad as never)).toMatch(/Pick a crop/);
+    }
+    expect(farm.tiles[tileAt(0, 0)]).toMatchObject({ crop: "", building: "" });
+    expect(farm.players[0].coins).toBe(coins);
+  });
+
+  it("gives free wheat seed to a broke farmer with nothing growing or stored", () => {
+    const farm = plainFarm();
+    farm.players[0].coins = BUILDINGS.well.cost;
+    expect(build(farm, 0, tileAt(0, 0), "well")).toBeNull();
+    expect(farm.players[0].coins).toBe(0);
+    expect(plant(farm, 0, tileAt(1, 0), "carrot")).toMatch(/need/);
+    expect(plant(farm, 0, tileAt(1, 0), "wheat")).toBeNull();
+    // With wheat growing they have to wait for it.
+    expect(plant(farm, 0, tileAt(0, 1), "wheat")).toMatch(/need/);
   });
 
   it("only works the owner's land", () => {
@@ -359,6 +386,19 @@ describe("sabotage", () => {
 });
 
 describe("net worth and the end of the match", () => {
+  it("counts a growing crop at market price in proportion to its growth", () => {
+    const farm = plainFarm();
+    farm.tiles[tileAt(2, 1)].terrain = "pond";
+    farm.players[0].coins = CROPS.pumpkin.seed;
+    const base = netWorth(farm, 0) - CROPS.pumpkin.seed;
+    plant(farm, 0, tileAt(1, 1), "pumpkin");
+    expect(netWorth(farm, 0)).toBe(base);
+    run(farm, CROPS.pumpkin.growTicks / 2);
+    expect(netWorth(farm, 0)).toBe(base + Math.floor(CROPS.pumpkin.price / 2));
+    run(farm, CROPS.pumpkin.growTicks);
+    expect(netWorth(farm, 0)).toBe(base + CROPS.pumpkin.price);
+  });
+
   it("counts coins, land, half the buildings and crops", () => {
     const farm = plainFarm();
     const base = netWorth(farm, 0);

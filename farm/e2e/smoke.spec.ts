@@ -99,6 +99,7 @@ test("two farmers buy land, grow, sell, fill an order and sabotage", async ({ br
 
   // Alice gives up; both see the result.
   await alice.click("#concede");
+  await expect(alice.locator("#concede")).toHaveText("Click again to give up");
   await alice.click("#concede");
   for (const page of [alice, bob]) {
     await expect(page.locator("#result")).toBeVisible();

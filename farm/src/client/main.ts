@@ -465,8 +465,7 @@ function main() {
     void enter(() => client.joinById(code, name(), FarmState));
   };
   $("start").onclick = () => room?.send("start");
-  // Giving up takes a second click within 3 s.
-  let concedeTimer = 0;
+  // Giving up takes a second click; moving the mouse away cancels it.
   $("concede").onclick = () => {
     const button = $("concede");
     if (button.classList.contains("confirm")) {
@@ -475,11 +474,10 @@ function main() {
     }
     button.classList.add("confirm");
     button.textContent = "Click again to give up";
-    clearTimeout(concedeTimer);
-    concedeTimer = window.setTimeout(() => {
-      button.classList.remove("confirm");
-      button.textContent = "Give up";
-    }, 3000);
+  };
+  $("concede").onmouseleave = () => {
+    $("concede").classList.remove("confirm");
+    $("concede").textContent = "Give up";
   };
   render();
 }

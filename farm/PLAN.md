@@ -44,7 +44,7 @@ Thomas confirmed these on 2026-10-30 ("fine for now"); numbers are tuning, not p
 
 - **Grid:** 16 × 12 tiles, mirrored so both corners are equal. Tiles: grass (normal), rich soil (crops grow faster), rock (needs paying to clear before planting), pond (can't be planted; waters adjacent tiles automatically).
 - **Buying land:** you can only buy a neutral tile next to land you own (not diagonally). Each tile costs more than the last one you bought (20 + 5 per tile bought so far), so a fast land-grab gets expensive. Rich soil costs 20 extra.
-- **Buyouts:** you can buy an enemy tile next to your land for twice what they paid; they get what they paid back, and any crop on it changes hands. Starting tiles and tiles with a building can't be bought out. A bought-out tile is safe for 30 s, and each player can buy out once every 20 s.
+- **Buyouts:** you can buy an enemy tile next to your land for twice what they paid; they get what they paid back, any crop on it changes hands, and the tile is then worth what you paid (so buying it back costs twice that). Starting tiles and tiles with a building can't be bought out. A bought-out tile is safe for 30 s, and each player can buy out once every 20 s.
 - **Crops (v1):** wheat (seed 5, 20 s, sells 14), carrot (12, 35 s, 34), pumpkin (30, 60 s, 85), berries (40, 30 s, 20; grow back in 25 s after harvest). Rich soil grows 50% faster. Click an empty owned tile to plant the selected seed, and click a ripe crop to harvest it into your barn.
 - **Watering:** a crop on a dry tile grows at half speed. Tiles next to a pond or a well are always wet. A well is a building you can place.
 - **Buildings (v1):** well (waters neighbours), scarecrow (blocks crows in a radius), silo (more barn capacity). Buildings occupy a tile and count toward net worth.
@@ -55,8 +55,8 @@ Thomas confirmed these on 2026-10-30 ("fine for now"); numbers are tuning, not p
   - **Crows:** eat the crops on 3 random enemy tiles, ripe ones first. A scarecrow protects tiles within 2.
   - **Weeds:** a 2×2 area of enemy tiles grows at half speed for 30 s. Cleared early by clicking each tile.
   - **Market dump:** throw away 3 of a crop to crash its price to the floor and freeze it there for 20 s.
-- **Net worth:** coins + each owned tile at its purchase price + each building at half its cost. Crops and barn stock count at the current market price. Ties are a draw.
-- **Start:** 2×2 owned tiles in each corner, a pond that waters half of them, and 60 coins. Wheat seeds are always affordable, so nobody gets stuck.
+- **Net worth:** coins + each owned tile at its purchase price + each building at half its cost. Barn stock counts at the current market price, and a planted crop at that price in proportion to how far it has grown. Ties are a draw.
+- **Start:** 2×2 owned tiles in each corner, a pond that waters half of them, and 60 coins. Wheat seed is free for a player who can't afford it and has nothing growing or stored, so nobody gets stuck.
 - **Networking:** the server runs the sim at a fixed 10 ticks/s and syncs tile and market state. The client sends actions (buy, plant, harvest, sell, build, sabotage, fill contract) and renders the synced state.
 - **Rooms:** create → 4-letter code → B joins → host starts. Extra visitors spectate. A disconnected player has 60 s to rejoin (same code and name), otherwise they forfeit. Either player can give up.
 - **Look & sound:** flat top-down tiles drawn in code, warm farm palette distinct from minigolf and lanes, each player's land outlined in their colour. Small pop effects on harvest, sale and sabotage, and a few synthesized sounds.
