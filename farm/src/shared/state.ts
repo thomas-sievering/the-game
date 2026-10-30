@@ -12,8 +12,12 @@ export const PlayerState = schema(
     bought: t.number().default(0),
     capacity: t.number().default(0),
     barn: t.map("number"),
-    /** Tick at which each sabotage, and the buyout, can be used again. */
+    /** Tick at which each sabotage, the buyout and the land claim can be used again. */
     ready: t.map("number"),
+    /** Far enough behind on net worth that sabotage is cheaper and comeback moves unlock. */
+    behind: t.boolean().default(false),
+    /** Has set up their one outpost. */
+    outpost: t.boolean().default(false),
     /** Researched techs, by id. */
     tech: t.map("boolean"),
   },

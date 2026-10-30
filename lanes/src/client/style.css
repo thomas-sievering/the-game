@@ -458,6 +458,15 @@ button.hand-card:active:not(:disabled) {
   filter: grayscale(0.7) brightness(0.72);
 }
 
+/* The lock overlay already dims a locked card; skip the filter so its discard chip stays bright. */
+.hand-card.poor:has(.locked) {
+  filter: none;
+}
+
+.hand-card.poor:has(.locked) > :not(.discard) {
+  filter: grayscale(0.7);
+}
+
 .hand-card .art {
   align-self: stretch;
   height: 66px;
@@ -551,6 +560,33 @@ button.hand-card:active:not(:disabled) {
   color: var(--muted);
   font-size: 11px;
   font-family: var(--serif);
+}
+
+.hand-card .discard {
+  position: absolute;
+  bottom: 6px;
+  left: 8px;
+  z-index: 2;
+  padding: 1px 6px;
+  border-radius: 9px;
+  border: 1.5px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+/* Shows on hover, and always on locked cards, which are the ones you most want to throw away. */
+.hand-card:hover .discard,
+.hand-card .locked ~ .discard {
+  opacity: 1;
+}
+
+.hand-card .discard:hover {
+  background: #e9a07a;
 }
 
 .hand-card .text {

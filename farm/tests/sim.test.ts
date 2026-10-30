@@ -2,18 +2,25 @@ import { describe, expect, it } from "vitest";
 import {
   BARN_CAPACITY,
   BUILDINGS,
+  BEHIND,
   BUYOUT,
+  CLAIM,
   CONTRACTS,
   CROPS,
   CROWS,
   DRAW,
   DUMP,
   type Farm,
+  GOATS,
+  GROWTH_FULL,
   LAND,
   MARKET,
   MATCH_TICKS,
+  OUTPOST,
+  RUSTLERS,
   SABOTAGE,
   START_COINS,
+  TAX,
   TECH,
   TICK_RATE,
   TILE_COUNT,
@@ -22,16 +29,21 @@ import {
   buy,
   buyoutPrice,
   capacity,
+  claim,
   clearRock,
   createFarm,
   fill,
   forfeit,
   harvest,
+  isBehind,
+  isBehindWorth,
   isRipe,
   isWet,
   landPrice,
+  landTax,
   mirror,
   netWorth,
+  outpost,
   plant,
   price,
   research,
@@ -116,6 +128,21 @@ describe("buying land", () => {
     expect(farm.tiles[tileAt(2, 0)].owner).toBe(-1);
   });
 
+  it("buys one outpost anywhere at a premium, which then extends your land", () => {
+    const farm = rich(plainFarm());
+    const far = tileAt(8, 6);
+    const cost = landPrice(farm, 0, far);
+    expect(outpost(farm, 0, far)).toBeNull();
+    expect(farm.tiles[far]).toMatchObject({ owner: 0, value: Math.floor((cost * OUTPOST.percent) / 100) });
+    expect(farm.players[0].bought).toBe(1);
+    // Land next to the outpost can be bought the normal way.
+    expect(buy(farm, 0, tileAt(9, 6))).toBeNull();
+    expect(outpost(farm, 0, tileAt(4, 4))).toMatch(/already have/);
+    expect(outpost(farm, 1, far)).toMatch(/neutral/);
+    farm.tiles[tileAt(4, 4)].terrain = "pond";
+    expect(outpost(farm, 1, tileAt(4, 4))).toMatch(/pond/);
+  });
+
   it("clears rock before it can be planted", () => {
     const farm = plainFarm();
     const tile = tileAt(1, 1);
@@ -172,6 +199,14 @@ describe("buyouts", () => {
     expect(buy(farm, 1, tileAt(1, 1))).toMatch(/Starting land/);
     expect(build(farm, 1, tileAt(2, 0), "well")).toBeNull();
     expect(buy(farm, 0, tileAt(2, 0))).toMatch(/building/);
+  });
+
+  it("takes a goat pen along with its land", () => {
+    const farm = contested();
+    own(farm, 1, tileAt(3, 0));
+    expect(build(farm, 1, tileAt(2, 0), "goats")).toBeNull();
+    expect(buy(farm, 0, tileAt(2, 0))).toBeNull();
+    expect(farm.tiles[tileAt(2, 0)]).toMatchObject({ owner: 0, building: "goats" });
   });
 });
 
@@ -396,6 +431,124 @@ describe("sabotage", () => {
   });
 });
 
+describe("land tax", () => {
+  it("charges tiles² / divisor every period, never below zero coins", () => {
+    const farm = plainFarm();
+    for (let x = 2; x < 10; x++) own(farm, 0, tileAt(x, 0));
+    // 12 tiles against side 1's 4.
+    farm.players[0].coins = 1000;
+    run(farm, TAX.everyTicks - 1);
+    expect(farm.players[0].coins).toBe(1000);
+    step(farm);
+    expect(landTax(12)).toBe(Math.floor(144 / TAX.divisor));
+    expect(farm.players[0].coins).toBe(1000 - landTax(12));
+    expect(farm.players[1].coins).toBe(START_COINS - landTax(4));
+    farm.players[0].coins = 2;
+    run(farm, TAX.everyTicks);
+    expect(farm.players[0].coins).toBe(0);
+  });
+});
+
+describe("goat pens", () => {
+  it("eat the nearest ripe enemy crop in range every period, unless fences keep them out", () => {
+    const farm = rich(plainFarm());
+    own(farm, 1, tileAt(4, 0));
+    own(farm, 1, tileAt(9, 0));
+    expect(build(farm, 1, tileAt(4, 0), "goats")).toBeNull();
+    plant(farm, 0, tileAt(0, 0), "wheat");
+    plant(farm, 0, tileAt(1, 0), "pumpkin");
+    // Wheat at (0,0) is 4 away, out of range; the pumpkin at (1,0) is 3 away.
+    run(farm, GOATS.everyTicks - (farm.tick % GOATS.everyTicks));
+    expect(farm.tiles[tileAt(1, 0)].crop).toBe("");
+    expect(farm.tiles[tileAt(0, 0)].crop).toBe("wheat");
+    expect(farm.events.find((e) => e.type === "goat")).toMatchObject({ side: 1, from: tileAt(4, 0), tile: tileAt(1, 0) });
+
+    // A ripe crop further away goes before a growing one next to the pen.
+    own(farm, 0, tileAt(5, 0));
+    own(farm, 0, tileAt(7, 0));
+    plant(farm, 0, tileAt(7, 0), "wheat");
+    farm.tiles[tileAt(7, 0)].growth = CROPS.wheat.growTicks * GROWTH_FULL;
+    plant(farm, 0, tileAt(5, 0), "pumpkin");
+    run(farm, GOATS.everyTicks - (farm.tick % GOATS.everyTicks));
+    expect(farm.tiles[tileAt(7, 0)].crop).toBe("");
+    expect(farm.tiles[tileAt(5, 0)].crop).toBe("pumpkin");
+
+    for (const id of ["survey", "fences"] as const) research(farm, 0, id);
+    run(farm, GOATS.everyTicks);
+    expect(farm.tiles[tileAt(5, 0)].crop).toBe("pumpkin");
+  });
+});
+
+describe("comebacks", () => {
+  /** Side 1 is far behind side 0. */
+  function lopsided() {
+    const farm = plainFarm();
+    farm.players[0].coins = 1000;
+    farm.players[1].coins = 200;
+    return farm;
+  }
+
+  it("a farmer below the threshold is behind and pays less for sabotage", () => {
+    const farm = lopsided();
+    expect(isBehind(farm, 1)).toBe(true);
+    expect(isBehind(farm, 0)).toBe(false);
+    // Early on a big percentage gap is only a few coins, which doesn't count.
+    expect(isBehindWorth(100, 200)).toBe(false);
+    expect(isBehindWorth(300, 500)).toBe(true);
+    plant(farm, 0, tileAt(0, 0), "wheat");
+    expect(sabotage(farm, 1, "crows")).toBeNull();
+    expect(farm.players[1].coins).toBe(200 - Math.floor((SABOTAGE.crows.cost * (100 - BEHIND.discount)) / 100));
+    // The leader pays full price.
+    plant(farm, 1, mirror(tileAt(0, 0)), "wheat");
+    const coins = farm.players[0].coins;
+    expect(sabotage(farm, 0, "crows")).toBeNull();
+    expect(farm.players[0].coins).toBe(coins - SABOTAGE.crows.cost);
+  });
+
+  it("rustlers steal the priciest stored crops, only for a farmer who is behind", () => {
+    const farm = lopsided();
+    farm.players[0].barn.wheat = 4;
+    farm.players[0].barn.pumpkin = 3;
+    expect(sabotage(farm, 0, "rustlers")).toMatch(/behind/);
+    expect(sabotage(farm, 1, "rustlers")).toBeNull();
+    expect(farm.players[1].barn).toMatchObject({ pumpkin: 3, wheat: RUSTLERS.count - 3 });
+    expect(farm.players[0].barn).toMatchObject({ pumpkin: 0, wheat: 4 - (RUSTLERS.count - 3) });
+    expect(farm.events.at(-1)).toMatchObject({ type: "rustlers", side: 1 });
+    expect(sabotage(farm, 1, "rustlers")).toMatch(/cooldown/);
+  });
+
+  it("rustlers need something to steal and room to keep it", () => {
+    const farm = lopsided();
+    expect(sabotage(farm, 1, "rustlers")).toMatch(/empty/);
+    farm.players[0].barn.wheat = 5;
+    farm.players[1].barn.carrot = capacity(farm, 1) - 2;
+    // The carrots keep side 1 behind but leave room for only 2.
+    farm.players[1].coins = 0;
+    expect(sabotage(farm, 1, "rustlers")).toMatch(/need/);
+    farm.players[1].coins = 30;
+    expect(sabotage(farm, 1, "rustlers")).toBeNull();
+    expect(farm.players[1].barn.wheat).toBe(2);
+  });
+
+  it("a land claim takes any enemy tile at a discount, only when behind", () => {
+    const farm = lopsided();
+    const far = tileAt(8, 6);
+    own(farm, 0, far, 40);
+    expect(claim(farm, 0, mirror(far))).toMatch(/behind/);
+    expect(claim(farm, 1, tileAt(0, 0))).toMatch(/Starting land/);
+    expect(claim(farm, 1, tileAt(3, 3))).toMatch(/their land/);
+    expect(claim(farm, 1, far)).toBeNull();
+    const cost = Math.floor((40 * BUYOUT.factor * CLAIM.percent) / 100);
+    expect(farm.tiles[far]).toMatchObject({ owner: 1, value: cost });
+    expect(farm.players[1].coins).toBe(200 - cost);
+    expect(farm.players[0].coins).toBe(1040);
+    own(farm, 0, tileAt(9, 6), 40);
+    expect(claim(farm, 1, tileAt(9, 6))).toMatch(/cooldown/);
+    run(farm, CLAIM.cooldownTicks);
+    expect(claim(farm, 1, tileAt(9, 6))).toBeNull();
+  });
+});
+
 describe("tech tree", () => {
   /** Researches a tech and everything above it in its branch. */
   const learn = (farm: Farm, side: 0 | 1, id: keyof typeof TECH) => {
@@ -581,6 +734,9 @@ describe("determinism", () => {
         }
         if (t % 300 === 0) for (const tile of order) buy(farm, side, mine(tile));
         if (t % 500 === 250) sabotage(farm, side, "crows");
+        if (t === 50) outpost(farm, side, mine(tileAt(7, 5)));
+        if (t === 900) build(farm, side, mine(tileAt(7, 5)), "goats");
+        if (t % 450 === 0) sabotage(farm, side, "rustlers");
         if (farm.contracts[0]) fill(farm, side, farm.contracts[0].id);
       }
       step(farm);

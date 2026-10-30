@@ -10,6 +10,8 @@ type Farm = {
   tech: string[];
   tiles: { owner: number; terrain: string; crop: string; growth: number; weeds: boolean }[];
   winner: number;
+  behind: boolean;
+  outpost: boolean;
   spectating: boolean;
   watching: string | null;
   tileOnScreen: (tile: number) => { x: number; y: number };
@@ -124,6 +126,18 @@ test("two farmers buy land, grow, sell, fill an order and sabotage", async ({ br
   await clickTile(alice, tileAt(0, 0));
   await expect.poll(async () => (await tileState(alice, tileAt(0, 0))).weeds).toBe(false);
   await bob.screenshot({ path: shots("5-bob") });
+
+  // Comeback moves stay locked for a farmer who isn't behind; the outpost tool can target land far from Bob's farm.
+  await expect(alice.locator("#sabotage button")).toHaveCount(4);
+  if (!(await farm(alice, (f) => f.behind))) await expect(alice.locator('#sabotage button[data-id="rustlers"]')).toContainText("🔒");
+  await bob.keyboard.press("o");
+  await expect(bob.locator('.tool[data-tool="outpost"]')).toHaveClass(/selected/);
+  const far = (await farm(bob, (f) => f.tiles.findIndex((t, i) => t.owner === -1 && t.terrain === "grass" && i % 16 >= 6 && i % 16 <= 9)))!;
+  const spot = await farm(bob, (f, t) => f.tileOnScreen(t), far);
+  await bob.mouse.move(spot.x, spot.y);
+  await expect(bob.locator("#hint")).toContainText("Set up your outpost here");
+  await expect(bob.locator("#tax")).toContainText(/land tax/i);
+  await bob.screenshot({ path: shots("5b-outpost") });
 
   // Alice gives up; both see the result.
   await alice.click("#concede");

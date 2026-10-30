@@ -18,6 +18,8 @@ export const START_GOLD = 100;
 export const START_INCOME = 4;
 export const INVEST_COST = 75;
 export const INVEST_COST_STEP = 25;
+/** Gold to swap a hand card for the next one; the discarded card goes to the bottom of the draw pile. */
+export const DISCARD_COST = 15;
 /** How far away a unit notices enemies and leaves its row to fight them. */
 export const AGGRO_RANGE = 170;
 /** Each column closer to the field spawns this much further forward. */
@@ -270,6 +272,22 @@ export function play(battle: Battle, side: Side, handIndex: number, cell?: numbe
     player.discard.push(card.id);
     player.hand[handIndex] = draw(battle, player);
   }
+  return null;
+}
+
+/** Pays DISCARD_COST to swap a hand card for the next one, putting it at the bottom of the draw pile. Returns an error message or null. */
+export function discard(battle: Battle, side: Side, handIndex: number): string | null {
+  if (battle.winner !== -1) return "The match is over";
+  const player = battle.players[side];
+  const card = player.hand[handIndex];
+  if (!Number.isInteger(handIndex) || !card) return "No card in that slot";
+  if (player.gold < DISCARD_COST) return "Not enough gold";
+  // Draw before putting the card back so it can't come straight back from an empty pile.
+  const next = draw(battle, player);
+  if (!next) return "No other card to draw";
+  player.gold -= DISCARD_COST;
+  player.hand[handIndex] = next;
+  player.deck.unshift(card);
   return null;
 }
 

@@ -419,6 +419,41 @@ button.primary {
   box-shadow: 0 0 0 2px var(--enemy);
 }
 
+.sabotage button.locked .state {
+  color: var(--muted);
+}
+
+.sabotage .state s {
+  color: var(--muted);
+}
+
+.behind-note {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--panel-2);
+  border-left: 4px solid var(--enemy);
+}
+
+.behind-note.mine {
+  border-left-color: var(--leaf);
+  font-weight: 600;
+}
+
+.tax {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.tax.due {
+  color: var(--danger);
+}
+
+.farmer.behind .farmer-worth {
+  color: var(--enemy);
+}
+
 .tools {
   position: absolute;
   bottom: 12px;
@@ -469,6 +504,10 @@ button.primary {
 
 .tool.poor {
   opacity: 0.55;
+}
+
+.tool.used {
+  opacity: 0.4;
 }
 
 .hint {
