@@ -1,0 +1,41 @@
+name: Farm CI
+
+on:
+  pull_request:
+    paths: [farm/**, .github/workflows/farm-*.yml]
+  push:
+    branches: [master]
+    paths: [farm/**, .github/workflows/farm-*.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: farm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: farm/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: End-to-end test against a local server
+        run: |
+          npx playwright install --with-deps chromium
+          PORT=2569 node dist/server.js &
+          npx wait-on -t 30000 http://localhost:2569/health
+          npm run e2e
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: farm-e2e-screenshots
+          path: farm/artifacts/e2e
+          if-no-files-found: ignore

@@ -1,0 +1,426 @@
+import { describe, expect, it } from "vitest";
+import {
+  BARN_CAPACITY,
+  BUILDINGS,
+  BUYOUT,
+  CONTRACTS,
+  CROPS,
+  CROWS,
+  DRAW,
+  DUMP,
+  type Farm,
+  LAND,
+  MARKET,
+  MATCH_TICKS,
+  SABOTAGE,
+  START_COINS,
+  TICK_RATE,
+  TILE_COUNT,
+  WEEDS_TICKS,
+  build,
+  buy,
+  buyoutPrice,
+  capacity,
+  clearRock,
+  createFarm,
+  fill,
+  forfeit,
+  harvest,
+  isRipe,
+  isWet,
+  landPrice,
+  mirror,
+  netWorth,
+  plant,
+  price,
+  sabotage,
+  sell,
+  step,
+  tileAt,
+  weed,
+} from "../src/shared/sim";
+
+const run = (farm: Farm, ticks: number) => {
+  for (let i = 0; i < ticks; i++) step(farm);
+};
+
+/** A farm with plain terrain so tests don't depend on the generated map. */
+function plainFarm(seed = 1): Farm {
+  const farm = createFarm({ seed });
+  for (const tile of farm.tiles) tile.terrain = "grass";
+  return farm;
+}
+
+const rich = (farm: Farm) => {
+  for (const player of farm.players) player.coins = 100_000;
+  return farm;
+};
+
+/** Gives a side a tile directly, as if bought. */
+function own(farm: Farm, side: 0 | 1, tile: number, value: number = LAND.base) {
+  Object.assign(farm.tiles[tile], { owner: side, value });
+}
+
+describe("map", () => {
+  it("is point-symmetric and starts each player in a 2×2 corner", () => {
+    for (const seed of [1, 7, 12345]) {
+      const farm = createFarm({ seed });
+      for (let i = 0; i < TILE_COUNT; i++) expect(farm.tiles[i].terrain).toBe(farm.tiles[mirror(i)].terrain);
+      for (const tile of [tileAt(0, 0), tileAt(1, 0), tileAt(0, 1), tileAt(1, 1)]) {
+        expect(farm.tiles[tile]).toMatchObject({ owner: 0, home: true, terrain: "grass" });
+        expect(farm.tiles[mirror(tile)]).toMatchObject({ owner: 1, home: true });
+      }
+      expect(farm.tiles.filter((t) => t.owner !== -1)).toHaveLength(8);
+      expect(farm.players.map((p) => p.coins)).toEqual([START_COINS, START_COINS]);
+    }
+  });
+
+  it("different seeds make different maps", () => {
+    const maps = new Set([1, 2, 3, 4].map((seed) => createFarm({ seed }).tiles.map((t) => t.terrain[0]).join("")));
+    expect(maps.size).toBeGreaterThan(1);
+  });
+
+  it("gives each player a pond next to their start", () => {
+    const farm = createFarm({ seed: 99 });
+    expect(farm.tiles[tileAt(2, 1)].terrain).toBe("pond");
+    expect(isWet(farm, tileAt(1, 1))).toBe(true);
+    expect(isWet(farm, mirror(tileAt(1, 1)))).toBe(true);
+    expect(isWet(farm, tileAt(0, 0))).toBe(false);
+  });
+});
+
+describe("buying land", () => {
+  it("only buys neutral land next to your own, each tile dearer than the last", () => {
+    const farm = rich(plainFarm());
+    expect(buy(farm, 0, tileAt(5, 5))).toMatch(/next to yours/);
+    const first = landPrice(farm, 0, tileAt(2, 0));
+    expect(first).toBe(LAND.base);
+    expect(buy(farm, 0, tileAt(2, 0))).toBeNull();
+    expect(farm.tiles[tileAt(2, 0)]).toMatchObject({ owner: 0, value: first });
+    expect(landPrice(farm, 0, tileAt(3, 0))).toBe(LAND.base + LAND.step);
+    // Diagonal neighbours don't count.
+    expect(buy(farm, 0, tileAt(2, 2))).toMatch(/next to yours/);
+    expect(buy(farm, 0, tileAt(0, 0))).toMatch(/already own/);
+  });
+
+  it("charges extra for rich soil and refuses ponds and missing coins", () => {
+    const farm = plainFarm();
+    farm.tiles[tileAt(2, 0)].terrain = "rich";
+    farm.tiles[tileAt(0, 2)].terrain = "pond";
+    expect(landPrice(farm, 0, tileAt(2, 0))).toBe(LAND.base + LAND.rich);
+    expect(buy(farm, 0, tileAt(0, 2))).toMatch(/pond/);
+    farm.players[0].coins = 5;
+    expect(buy(farm, 0, tileAt(2, 0))).toMatch(/need/);
+    expect(farm.tiles[tileAt(2, 0)].owner).toBe(-1);
+  });
+
+  it("clears rock before it can be planted", () => {
+    const farm = plainFarm();
+    const tile = tileAt(1, 1);
+    farm.tiles[tile].terrain = "rock";
+    expect(plant(farm, 0, tile, "wheat")).toMatch(/rock/);
+    expect(clearRock(farm, 0, tile)).toBeNull();
+    expect(farm.players[0].coins).toBe(START_COINS - LAND.clear);
+    expect(plant(farm, 0, tile, "wheat")).toBeNull();
+  });
+});
+
+describe("buyouts", () => {
+  /** Side 1 owns (2,0), which borders side 0's start. */
+  function contested() {
+    const farm = rich(plainFarm());
+    own(farm, 1, tileAt(2, 0), 30);
+    return farm;
+  }
+
+  it("takes an enemy tile for twice its value and refunds the old owner, crop included", () => {
+    const farm = contested();
+    const tile = tileAt(2, 0);
+    expect(plant(farm, 1, tile, "pumpkin")).toBeNull();
+    const before = farm.players.map((p) => p.coins);
+    expect(buyoutPrice(farm, tile)).toBe(60);
+    expect(buy(farm, 0, tile)).toBeNull();
+    expect(farm.tiles[tile]).toMatchObject({ owner: 0, value: 30, crop: "pumpkin" });
+    expect(farm.players[0].coins).toBe(before[0] - 60);
+    expect(farm.players[1].coins).toBe(before[1] + 30);
+    expect(farm.events.at(-1)).toMatchObject({ type: "buyout", side: 0, tile });
+  });
+
+  it("protects the tile afterwards and has a cooldown", () => {
+    const farm = contested();
+    const tile = tileAt(2, 0);
+    expect(buy(farm, 0, tile)).toBeNull();
+    // Side 1 still borders it through (3,0).
+    own(farm, 1, tileAt(3, 0));
+    expect(buy(farm, 1, tile)).toMatch(/just bought out/);
+    run(farm, BUYOUT.protectTicks);
+    expect(buy(farm, 1, tile)).toBeNull();
+    own(farm, 1, tileAt(0, 2));
+    expect(buy(farm, 1, tileAt(0, 2))).toMatch(/already own/);
+    own(farm, 0, tileAt(4, 0));
+    own(farm, 1, tileAt(5, 0));
+    expect(buy(farm, 1, tileAt(4, 0))).toMatch(/cooldown/);
+  });
+
+  it("can't take starting land or land with a building", () => {
+    const farm = contested();
+    own(farm, 1, tileAt(2, 1));
+    expect(buy(farm, 1, tileAt(1, 1))).toMatch(/Starting land/);
+    expect(build(farm, 1, tileAt(2, 0), "well")).toBeNull();
+    expect(buy(farm, 0, tileAt(2, 0))).toMatch(/building/);
+  });
+});
+
+describe("crops", () => {
+  it("grows on wet grass in exactly its grow time, and twice as long on dry land", () => {
+    const farm = plainFarm();
+    const wet = tileAt(1, 1);
+    const dry = tileAt(0, 0);
+    farm.tiles[tileAt(2, 1)].terrain = "pond";
+    farm.tiles[tileAt(3, 1)].terrain = "grass";
+    expect(isWet(farm, wet)).toBe(true);
+    expect(isWet(farm, dry)).toBe(false);
+    farm.players[0].coins = 100;
+    plant(farm, 0, wet, "wheat");
+    plant(farm, 0, dry, "wheat");
+    expect(farm.players[0].coins).toBe(100 - 2 * CROPS.wheat.seed);
+    run(farm, CROPS.wheat.growTicks - 1);
+    expect(isRipe(farm.tiles[wet])).toBe(false);
+    step(farm);
+    expect(isRipe(farm.tiles[wet])).toBe(true);
+    expect(isRipe(farm.tiles[dry])).toBe(false);
+    run(farm, CROPS.wheat.growTicks);
+    expect(isRipe(farm.tiles[dry])).toBe(true);
+  });
+
+  it("grows faster on rich soil", () => {
+    const farm = plainFarm();
+    const tile = tileAt(1, 1);
+    farm.tiles[tile].terrain = "rich";
+    farm.tiles[tileAt(2, 1)].terrain = "pond";
+    farm.tiles[tileAt(3, 1)].terrain = "grass";
+    plant(farm, 0, tile, "wheat");
+    run(farm, Math.ceil((CROPS.wheat.growTicks * 2) / 3));
+    expect(isRipe(farm.tiles[tile])).toBe(true);
+  });
+
+  it("a well waters its neighbours", () => {
+    const farm = rich(plainFarm());
+    farm.tiles[tileAt(3, 1)].terrain = "grass";
+    expect(isWet(farm, tileAt(0, 0))).toBe(false);
+    expect(build(farm, 0, tileAt(1, 1), "well")).toBeNull();
+    expect(isWet(farm, tileAt(0, 0))).toBe(true);
+    expect(plant(farm, 0, tileAt(1, 1), "wheat")).toMatch(/in use/);
+  });
+
+  it("harvests into the barn up to its capacity, and berries grow back", () => {
+    const farm = rich(plainFarm());
+    const tile = tileAt(0, 0);
+    expect(harvest(farm, 0, tile)).toMatch(/Nothing ripe/);
+    plant(farm, 0, tile, "berries");
+    run(farm, CROPS.berries.growTicks * 2);
+    expect(harvest(farm, 0, tile)).toBeNull();
+    expect(farm.players[0].barn.berries).toBe(1);
+    expect(farm.tiles[tile].crop).toBe("berries");
+    expect(isRipe(farm.tiles[tile])).toBe(false);
+    run(farm, CROPS.berries.regrowTicks! * 2);
+    expect(isRipe(farm.tiles[tile])).toBe(true);
+
+    farm.players[0].barn.wheat = BARN_CAPACITY - 1;
+    expect(harvest(farm, 0, tile)).toMatch(/barn is full/);
+    expect(capacity(farm, 0)).toBe(BARN_CAPACITY);
+    build(farm, 0, tileAt(1, 1), "silo");
+    expect(capacity(farm, 0)).toBe(2 * BARN_CAPACITY);
+    expect(harvest(farm, 0, tile)).toBeNull();
+  });
+
+  it("only works the owner's land", () => {
+    const farm = rich(plainFarm());
+    expect(plant(farm, 1, tileAt(0, 0), "wheat")).toMatch(/not your land/);
+    expect(plant(farm, 0, tileAt(0, 0), "nope" as never)).toMatch(/Unknown/);
+    expect(build(farm, 0, tileAt(0, 0), "castle" as never)).toMatch(/Unknown/);
+  });
+});
+
+describe("market", () => {
+  it("each unit sold lowers the price for both players, and it recovers over time", () => {
+    const farm = plainFarm();
+    farm.players[0].barn.wheat = 5;
+    expect(price(farm, "wheat")).toBe(CROPS.wheat.price);
+    expect(sell(farm, 0, "wheat", 5)).toBeNull();
+    let expected = 0;
+    for (let i = 0; i < 5; i++) expected += Math.floor((CROPS.wheat.price * (MARKET.full - i * MARKET.dropPerUnit)) / MARKET.full);
+    expect(farm.players[0].coins).toBe(START_COINS + expected);
+    expect(farm.market.wheat).toBe(MARKET.full - 5 * MARKET.dropPerUnit);
+    expect(price(farm, "wheat")).toBeLessThan(CROPS.wheat.price);
+    // Side 1 gets the lower price too.
+    farm.players[1].barn.wheat = 1;
+    const low = price(farm, "wheat");
+    sell(farm, 1, "wheat", 1);
+    expect(farm.players[1].coins).toBe(START_COINS + low);
+    expect(price(farm, "carrot")).toBe(CROPS.carrot.price);
+    run(farm, (6 * MARKET.dropPerUnit) / MARKET.recoverPerTick);
+    expect(farm.market.wheat).toBe(MARKET.full);
+  });
+
+  it("never drops below the floor and refuses empty sales", () => {
+    const farm = plainFarm();
+    farm.players[0].barn.wheat = 50;
+    sell(farm, 0, "wheat", 50);
+    expect(farm.market.wheat).toBe(MARKET.floor);
+    expect(sell(farm, 0, "wheat", 1)).toMatch(/none/);
+    farm.players[0].barn.carrot = 2;
+    expect(sell(farm, 0, "carrot", 10)).toBeNull();
+    expect(farm.players[0].barn.carrot).toBe(0);
+  });
+});
+
+describe("contracts", () => {
+  it("starts with three orders and the first player to deliver gets the reward", () => {
+    const farm = plainFarm();
+    expect(farm.contracts).toHaveLength(CONTRACTS.slots);
+    const contract = farm.contracts[0];
+    expect(fill(farm, 0, contract.id)).toMatch(/goods/);
+    for (const player of farm.players) for (const item of contract.items) player.barn[item.crop] += item.count;
+    expect(fill(farm, 1, contract.id)).toBeNull();
+    expect(farm.players[1].coins).toBe(START_COINS + contract.reward);
+    expect(farm.players[1].barn).toEqual({ wheat: 0, carrot: 0, pumpkin: 0, berries: 0 });
+    expect(fill(farm, 0, contract.id)).toMatch(/gone/);
+    const worth = contract.items.reduce((sum, item) => sum + CROPS[item.crop].price * item.count, 0);
+    expect(contract.reward).toBeGreaterThan(worth);
+  });
+
+  it("the first order is a quick one for 2 wheat", () => {
+    expect(plainFarm(5).contracts[0].items).toEqual([{ crop: "wheat", count: 2 }]);
+  });
+
+  it("orders expire and new ones come in", () => {
+    const farm = plainFarm();
+    const first = farm.contracts[0];
+    run(farm, first.expiresAt);
+    expect(farm.contracts.some((c) => c.id === first.id)).toBe(false);
+    run(farm, CONTRACTS.refillTicks * 2);
+    expect(farm.contracts.length).toBeGreaterThan(0);
+    expect(Math.max(...farm.contracts.map((c) => c.id))).toBeGreaterThan(CONTRACTS.slots);
+  });
+});
+
+describe("sabotage", () => {
+  it("crows eat ripe enemy crops first, cost coins and go on cooldown", () => {
+    const farm = rich(plainFarm());
+    const tiles = [tileAt(0, 0), tileAt(1, 0), tileAt(0, 1), tileAt(1, 1)];
+    for (const tile of tiles) plant(farm, 0, tile, "wheat");
+    run(farm, CROPS.wheat.growTicks * 2);
+    for (const tile of tiles.slice(0, 2)) harvest(farm, 0, tile);
+    for (const tile of tiles.slice(0, 2)) plant(farm, 0, tile, "carrot");
+    const coins = farm.players[1].coins;
+    expect(sabotage(farm, 1, "crows")).toBeNull();
+    expect(farm.players[1].coins).toBe(coins - SABOTAGE.crows.cost);
+    // Both ripe wheat tiles are eaten, plus one growing carrot.
+    expect(tiles.filter((t) => farm.tiles[t].crop === "")).toHaveLength(CROWS.count);
+    expect(tiles.slice(2).every((t) => farm.tiles[t].crop === "")).toBe(true);
+    expect(sabotage(farm, 1, "crows")).toMatch(/cooldown/);
+  });
+
+  it("a scarecrow keeps the crows away", () => {
+    const farm = rich(plainFarm());
+    plant(farm, 0, tileAt(0, 0), "wheat");
+    build(farm, 0, tileAt(1, 1), "scarecrow");
+    expect(sabotage(farm, 1, "crows")).toMatch(/No enemy crops/);
+    expect(farm.players[1].coins).toBe(100_000);
+  });
+
+  it("weeds halve enemy growth until they wear off or are pulled", () => {
+    const farm = rich(plainFarm());
+    for (const tile of [tileAt(0, 0), tileAt(1, 0)]) plant(farm, 0, tile, "wheat");
+    expect(sabotage(farm, 1, "weeds", tileAt(5, 5))).toMatch(/enemy land/);
+    expect(sabotage(farm, 1, "weeds", tileAt(0, 0))).toBeNull();
+    expect(farm.tiles[tileAt(1, 1)].weedsUntil).toBe(farm.tick + WEEDS_TICKS);
+    expect(weed(farm, 0, tileAt(1, 0))).toBeNull();
+    expect(weed(farm, 0, tileAt(1, 0))).toMatch(/no weeds/);
+    run(farm, 10);
+    expect(farm.tiles[tileAt(1, 0)].growth).toBe(2 * farm.tiles[tileAt(0, 0)].growth);
+    run(farm, WEEDS_TICKS);
+    expect(farm.tiles[tileAt(0, 0)].weedsUntil).toBeLessThan(farm.tick);
+  });
+
+  it("a market dump crashes a price and freezes it", () => {
+    const farm = rich(plainFarm());
+    expect(sabotage(farm, 0, "dump", "pumpkin")).toMatch(/need 3/);
+    farm.players[0].barn.pumpkin = DUMP.units;
+    expect(sabotage(farm, 0, "dump", "pumpkin")).toBeNull();
+    expect(farm.players[0].barn.pumpkin).toBe(0);
+    expect(farm.market.pumpkin).toBe(MARKET.floor);
+    run(farm, DUMP.freezeTicks - 1);
+    expect(farm.market.pumpkin).toBe(MARKET.floor);
+    run(farm, 2);
+    expect(farm.market.pumpkin).toBeGreaterThan(MARKET.floor);
+  });
+});
+
+describe("net worth and the end of the match", () => {
+  it("counts coins, land, half the buildings and crops", () => {
+    const farm = plainFarm();
+    const base = netWorth(farm, 0);
+    expect(base).toBe(START_COINS + 4 * LAND.base);
+    farm.players[0].coins += BUILDINGS.well.cost;
+    build(farm, 0, tileAt(0, 0), "well");
+    expect(netWorth(farm, 0)).toBe(base + BUILDINGS.well.cost / 2);
+    farm.players[0].barn.wheat = 2;
+    expect(netWorth(farm, 0)).toBe(base + BUILDINGS.well.cost / 2 + 2 * price(farm, "wheat"));
+  });
+
+  it("the richer farmer wins when time runs out", () => {
+    const farm = plainFarm();
+    farm.players[1].coins += 1;
+    run(farm, MATCH_TICKS);
+    expect(farm.winner).toBe(1);
+    expect(buy(farm, 0, tileAt(2, 0))).toMatch(/over/);
+    step(farm);
+    expect(farm.tick).toBe(MATCH_TICKS);
+  });
+
+  it("equal net worth is a draw, and leaving forfeits", () => {
+    const farm = plainFarm();
+    run(farm, MATCH_TICKS);
+    expect(farm.winner).toBe(DRAW);
+    const other = plainFarm();
+    forfeit(other, 0);
+    expect(other.winner).toBe(1);
+  });
+});
+
+describe("determinism", () => {
+  /** Plays a scripted match with both players acting through the sim. */
+  function play(seed: number) {
+    const farm = createFarm({ seed });
+    const order = [tileAt(2, 0), tileAt(0, 2), tileAt(2, 1), tileAt(1, 2), tileAt(3, 0)];
+    for (let t = 0; t < 3 * 60 * TICK_RATE; t++) {
+      for (const side of [0, 1] as const) {
+        const p = farm.players[side];
+        const mine = (tile: number) => (side === 0 ? tile : mirror(tile));
+        for (let i = 0; i < TILE_COUNT; i++) {
+          if (farm.tiles[i].owner !== side) continue;
+          if (isRipe(farm.tiles[i])) harvest(farm, side, i);
+          else if (!farm.tiles[i].crop && !farm.tiles[i].building) plant(farm, side, i, t % 2 ? "carrot" : "wheat");
+        }
+        if (p.barn.wheat + p.barn.carrot > 4) {
+          sell(farm, side, "wheat", 10);
+          sell(farm, side, "carrot", 10);
+        }
+        if (t % 300 === 0) for (const tile of order) buy(farm, side, mine(tile));
+        if (t % 500 === 250) sabotage(farm, side, "crows");
+        if (farm.contracts[0]) fill(farm, side, farm.contracts[0].id);
+      }
+      step(farm);
+    }
+    return farm;
+  }
+
+  it("the same seed and actions give the identical state", () => {
+    const a = play(42);
+    const b = play(42);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    expect(a.players[0].coins).not.toBe(START_COINS);
+  });
+});
