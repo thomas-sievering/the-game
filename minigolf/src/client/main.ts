@@ -243,6 +243,11 @@ function stepAnim(now: number) {
     } else if (e.type === "cup") {
       sfx.cup();
       renderer.burst(...HOLES_BY_ID.get(anim.msg.holeId)!.cup, p?.color ?? "#ffffff");
+    } else if (e.type === "boost") sfx.boost();
+    else if (e.type === "portal") {
+      sfx.portal();
+      renderer.portalHit(e.index);
+      renderer.clearTrail(e.id);
     } else if (e.type === "splash") {
       sfx.splash();
       renderer.splash(e.x, e.y);

@@ -1,6 +1,6 @@
 import { Application, Container, Graphics, Rectangle, Text } from "pixi.js";
 import { type Hole, type Point, holeExtent, pointInPolygon } from "../shared/hole";
-import { BALL_RADIUS, CUP_RADIUS, MAX_AIM_DISTANCE, moverPose } from "../shared/physics";
+import { BALL_RADIUS, CUP_RADIUS, MAX_AIM_DISTANCE, PORTAL_RADIUS, moverPose } from "../shared/physics";
 
 /** A garden minigolf park: a raised carpet course with wooden rails, set in a lawn with trees and flower beds. */
 export const PALETTE = {
@@ -37,10 +37,18 @@ export const PALETTE = {
   slider: 0xf4bd3c,
   sliderDark: 0xc98f1c,
   sliderLight: 0xffe08a,
+  ice: 0xd6eef7,
+  iceDark: 0x9fcde0,
+  boost: 0xf08a3a,
+  boostDark: 0xc4612a,
+  boostLight: 0xffe08a,
   shadow: 0x1f3a1a,
   metal: 0xdfe3e6,
   gold: 0xf2b632,
 };
+
+/** Rim colour of each portal pair, so linked ends match. */
+const PORTAL_COLORS = [0x9b6bea, 0x2fb8a8, 0xe8615a, 0x3f8fd2];
 
 const FLOWERS = [0xffffff, 0xf7d046, 0xf29bc0, 0xe8615a, 0xb9a3f0, 0xffb36b];
 const TREES = [0x4f8a43, 0x5b9a4b, 0x467d3d];
@@ -207,6 +215,8 @@ export class Renderer {
   private time = 0;
   /** Seconds left on each bumper's hit flash. */
   private bumperFlash: number[] = [];
+  /** Seconds left on each portal's flash after a ball goes through. */
+  private portalFlash: number[] = [];
 
   async init(parent: HTMLElement): Promise<void> {
     await this.app.init({
@@ -242,6 +252,7 @@ export class Renderer {
     this.particles = [];
     this.rings = [];
     this.bumperFlash = [];
+    this.portalFlash = [];
     this.glints = [];
     for (const label of this.labelCache.values()) label.visible = false;
     if (hole) {
@@ -449,7 +460,9 @@ export class Renderer {
     }
     for (const zone of hole.zones) {
       const others = hole.zones.filter((z) => z !== zone && z.type === zone.type).map((z) => z.points);
-      if (zone.type === "sand") surface.addChild(this.sand(zone.points, others));
+      if (zone.type === "ice") surface.addChild(this.ice(zone.points, others));
+      else if (zone.type === "boost") surface.addChild(this.boostPad(zone.points));
+      else if (zone.type === "sand") surface.addChild(this.sand(zone.points, others));
       else if (zone.type === "water") surface.addChild(this.water(zone.points, others));
     }
     const inner = new Graphics();
@@ -487,6 +500,17 @@ export class Renderer {
     });
 
     const marks = new Graphics();
+    (hole.portals ?? []).forEach((portal, i) => {
+      const color = PORTAL_COLORS[i % PORTAL_COLORS.length];
+      for (const [x, y] of [portal.a, portal.b]) {
+        const r = PORTAL_RADIUS + 4;
+        marks.circle(x, y, r + 3).fill({ color: 0xffffff, alpha: 0.18 });
+        marks.circle(x, y, r).fill(mix(color, 0xffffff, 0.35));
+        marks.circle(x, y, r - 3).fill(color);
+        marks.circle(x, y, r - 6).fill(mix(color, 0x000000, 0.55));
+        marks.circle(x + 1.5, y + 2, r - 8).fill({ color: 0x000000, alpha: 0.35 });
+      }
+    });
     const [tx, ty] = hole.tee;
     marks.roundRect(tx - 18, ty - 18, 36, 36, 7).fill({ color: PALETTE.tee }).stroke({ width: 2, color: PALETTE.teeLine, alpha: 0.8 });
     marks.roundRect(tx - 13, ty - 13, 26, 26, 4).stroke({ width: 1.2, color: PALETTE.teeLine, alpha: 0.35 });
@@ -631,6 +655,37 @@ export class Renderer {
     return c;
   }
 
+  private ice(points: Point[], others: Point[][]): Container {
+    const base = new Graphics().poly(points.flat()).fill(PALETTE.ice);
+    const g = new Graphics();
+    const [x0, y0, x1, y1] = bbox(points);
+    // Polished streaks, frosty specks and a cold rim where it meets the carpet.
+    for (let x = x0 - (y1 - y0); x < x1; x += 46) {
+      const k = hash(x);
+      g.moveTo(x, y1).lineTo(x + (y1 - y0), y0).stroke({ width: 6 + k * 10, color: 0xffffff, alpha: 0.25 + k * 0.2 });
+    }
+    for (let y = y0 + 4; y < y1; y += 9) {
+      for (let x = x0 + 4; x < x1; x += 9) {
+        const r = hash(x * 29 + y * 11);
+        if (r < 0.12) g.circle(x + r * 30, y + hash(x + y * 5) * 6, 0.8 + r * 6).fill({ color: r < 0.06 ? 0xffffff : PALETTE.iceDark, alpha: 0.8 });
+      }
+    }
+    const edges = openEdges(points, others);
+    strokeEdges(g, edges, { width: 10, color: PALETTE.iceDark, alpha: 0.45 });
+    strokeEdges(g, edges, { width: 3, color: 0xffffff, alpha: 0.8 });
+    const c = new Container();
+    c.addChild(base, this.clipped(g, points));
+    return c;
+  }
+
+  private boostPad(points: Point[]): Container {
+    const g = new Graphics();
+    g.poly(points.flat()).fill(PALETTE.boost);
+    g.poly(points.flat()).stroke({ width: 8, color: PALETTE.boostDark, alpha: 0.6, join: "round" });
+    g.poly(points.flat()).stroke({ width: 2, color: PALETTE.boostLight, alpha: 0.9, join: "round" });
+    return this.clipped(g, points);
+  }
+
   private sand(points: Point[], others: Point[][]): Container {
     const base = new Graphics().poly(points.flat()).fill(PALETTE.sand);
     const g = new Graphics();
@@ -695,6 +750,10 @@ export class Renderer {
 
   // ── Per frame ──
 
+  portalHit(index: number): void {
+    this.portalFlash[index] = 0.35;
+  }
+
   bumperHit(index: number): void {
     this.bumperFlash[index] = 0.25;
   }
@@ -709,6 +768,47 @@ export class Renderer {
       const w = 4 + k * 4;
       g.moveTo(x - w, y).quadraticCurveTo(x, y - 3 * k, x + w, y).stroke({ width: 2, color: 0xffffff, alpha: k * 0.8, cap: "round" });
     }
+
+    // Chevrons on boost pads stream toward where they fling the ball.
+    for (const zone of hole.zones) {
+      if (zone.type !== "boost") continue;
+      const len = Math.hypot(...zone.velocity) || 1;
+      const [ux, uy] = [zone.velocity[0] / len, zone.velocity[1] / len];
+      const [px, py] = [-uy, ux];
+      const along = zone.points.map(([x, y]) => x * ux + y * uy);
+      const across = zone.points.map(([x, y]) => x * px + y * py);
+      const [a0, a1, c0, c1] = [Math.min(...along), Math.max(...along), Math.min(...across), Math.max(...across)];
+      const step = 20;
+      const shift = (this.time * 50) % step;
+      for (let a = a0 + shift; a < a1; a += step) {
+        const fade = Math.min(1, (a - a0) / 12, (a1 - a) / 12);
+        for (let c = c0 + 14; c < c1 - 6; c += 26) {
+          const [x, y] = [ux * a + px * c, uy * a + py * c];
+          if (!pointInPolygon(x, y, zone.points) || distToPolygon(x, y, zone.points) < 7) continue;
+          g.moveTo(x - ux * 6 + px * 7, y - uy * 6 + py * 7)
+            .lineTo(x, y)
+            .lineTo(x - ux * 6 - px * 7, y - uy * 6 - py * 7)
+            .stroke({ width: 3.5, color: PALETTE.boostLight, alpha: 0.9 * fade, cap: "round", join: "round" });
+        }
+      }
+    }
+
+    // Portals swirl; a ball going through makes both ends flash.
+    (hole.portals ?? []).forEach((portal, i) => {
+      const flash = Math.max(0, (this.portalFlash[i] ?? 0) - dt);
+      this.portalFlash[i] = flash;
+      const color = mix(PORTAL_COLORS[i % PORTAL_COLORS.length], 0xffffff, 0.45);
+      for (const [x, y] of [portal.a, portal.b]) {
+        if (flash > 0) g.circle(x, y, PORTAL_RADIUS + 4 + 14 * (1 - flash / 0.35)).stroke({ width: 3, color: 0xffffff, alpha: flash * 2 });
+        for (let k = 0; k < 3; k++) {
+          const r = PORTAL_RADIUS - 4 - k * 3.2;
+          const start = this.time * (2.4 + k * 0.8) + (k * Math.PI * 2) / 3;
+          g.moveTo(x + Math.cos(start) * r, y + Math.sin(start) * r)
+            .arc(x, y, r, start, start + 2.2)
+            .stroke({ width: 1.8, color, alpha: 0.75 - k * 0.15, cap: "round" });
+        }
+      }
+    });
 
     (hole.bumpers ?? []).forEach(({ center: [x, y], radius }, i) => {
       const flash = Math.max(0, (this.bumperFlash[i] ?? 0) - dt);
@@ -773,6 +873,10 @@ export class Renderer {
     trail.push([x, y]);
     if (trail.length > 14) trail.shift();
     this.trails.set(id, trail);
+  }
+
+  clearTrail(id: string): void {
+    this.trails.delete(id);
   }
 
   clearTrails(): void {
