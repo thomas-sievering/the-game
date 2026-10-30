@@ -1,7 +1,7 @@
 import { type ArraySchema, StateView } from "@colyseus/schema";
 import { type Client, Room } from "colyseus";
 import { STARTER_DECK, deckError } from "../shared/cards";
-import { type Battle, type Side, TICK_RATE, createBattle, invest, play, step } from "../shared/sim";
+import { type Battle, type Side, TICK_RATE, createBattle, invest, play, sell, step } from "../shared/sim";
 import { LanesState, type PlayMessage, PlayerState, SpectatorState, UnitState } from "../shared/state";
 
 const CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // no I/O to avoid confusion with 1/0
@@ -43,6 +43,10 @@ export class LanesRoom extends Room<{ state: LanesState }> {
       else this.decks.set(client.sessionId, [...(deck as string[])]);
     },
 
+    sell: (client: Client, message: { cell?: unknown }) => {
+      this.act(client, (battle, side) => sell(battle, side, Number(message?.cell)));
+    },
+
     invest: (client: Client) => {
       this.act(client, (battle, side) => invest(battle, side));
     },
@@ -55,13 +59,13 @@ export class LanesRoom extends Room<{ state: LanesState }> {
       const spectator = this.state.spectators.find((sp) => sp.id === target?.sessionId);
       if (!target) return;
       if (message.spectate === true && player) {
-        target.view?.remove(player);
         this.state.players.splice(this.state.players.indexOf(player), 1);
         this.state.spectators.push(new SpectatorState({ id: player.id, name: player.name }));
       } else if (message.spectate === false && spectator && this.state.players.length < 2) {
         this.state.spectators.splice(this.state.spectators.indexOf(spectator), 1);
-        this.addPlayer(target, spectator.name);
+        this.addPlayer(spectator.id, spectator.name);
       }
+      this.updateViews();
     },
   };
 
@@ -93,16 +97,27 @@ export class LanesRoom extends Room<{ state: LanesState }> {
     if (!deckError(options?.deck)) this.decks.set(client.sessionId, [...(options.deck as string[])]);
     client.view = new StateView();
     // Joins as a player while the lobby has a seat; otherwise (full or mid-match) as a spectator.
-    if (this.state.phase === "lobby" && this.state.players.length < 2) this.addPlayer(client, name);
+    if (this.state.phase === "lobby" && this.state.players.length < 2) this.addPlayer(client.sessionId, name);
     else this.state.spectators.push(new SpectatorState({ id: client.sessionId, name }));
     if (!this.state.hostId) this.state.hostId = client.sessionId;
+    this.updateViews();
   }
 
-  private addPlayer(client: Client, name: string) {
+  private addPlayer(id: string, name: string) {
     const side = this.state.players.some((p) => p.side === 0) ? 1 : 0;
-    const player = new PlayerState({ id: client.sessionId, name, side });
-    this.state.players.push(player);
-    client.view!.add(player);
+    this.state.players.push(new PlayerState({ id, name, side }));
+  }
+
+  /** Players see their own private fields; spectators see both players'. */
+  private updateViews() {
+    for (const client of this.clients) {
+      const spectating = !this.state.players.some((p) => p.id === client.sessionId);
+      for (const player of this.state.players) {
+        const visible = spectating || player.id === client.sessionId;
+        if (visible && !client.view!.has(player)) client.view!.add(player);
+        else if (!visible && client.view!.has(player)) client.view!.remove(player);
+      }
+    }
   }
 
   onLeave(client: Client) {
@@ -143,6 +158,7 @@ export class LanesRoom extends Room<{ state: LanesState }> {
       view.investCost = player.investCost;
       syncArray(view.hand, player.hand);
       syncArray(view.grid, player.grid);
+      syncArray(view.levels, player.levels);
       for (const [card, tick] of Object.entries(player.ready)) if (view.ready.get(card) !== tick) view.ready.set(card, tick);
     }
     if (battle.events.length) this.broadcast("fx", battle.events.splice(0));
@@ -153,7 +169,7 @@ export class LanesRoom extends Room<{ state: LanesState }> {
       const view = this.state.units.get(key);
       const fields = { x: unit.x, y: unit.y, hp: unit.hp, hasted: unit.hasteTicks > 0, frozen: unit.frozenTicks > 0 };
       if (view) Object.assign(view, fields);
-      else this.state.units.set(key, new UnitState({ id: unit.id, side: unit.side, card: unit.card, maxHp: unit.maxHp, ...fields }));
+      else this.state.units.set(key, new UnitState({ id: unit.id, side: unit.side, card: unit.card, maxHp: unit.maxHp, level: unit.level, ...fields }));
     }
     for (const key of [...this.state.units.keys()]) if (!alive.has(key)) this.state.units.delete(key);
   }
@@ -169,7 +185,7 @@ export class LanesRoom extends Room<{ state: LanesState }> {
   }
 }
 
-function syncArray(view: ArraySchema<string>, values: string[]) {
+function syncArray<T>(view: ArraySchema<T>, values: T[]) {
   for (let i = 0; i < values.length; i++) {
     if (i >= view.length) view.push(values[i]);
     else if (view[i] !== values[i]) view[i] = values[i];

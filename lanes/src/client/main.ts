@@ -1,10 +1,10 @@
 import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
 import { CARDS, type Card, DECK_SIZE, MAX_COPIES, type Role, STARTER_DECK, deckError } from "../shared/cards";
-import { BASE_HP, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, SHRINE, TICK_RATE, WAVE_TICKS } from "../shared/sim";
+import { BASE_HP, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, MAX_LEVEL, SHRINE, TICK_RATE, WAVE_TICKS, sellValue } from "../shared/sim";
 import { LanesState, type PlayerState } from "../shared/state";
 import { isMuted, sfx, toggleMute } from "./audio";
-import { Renderer } from "./render";
+import { type Board, Renderer } from "./render";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -22,8 +22,10 @@ let toastTimer = 0;
 let deck = loadDeck();
 /** Deck being edited while the deck screen is open, else null. */
 let draft: string[] | null = null;
-/** What the last render saw, so sounds play only on changes. */
-let heard = { tick: -1, grid: "", income: 0, phase: "" };
+/** Own pad picked for selling, or -1. */
+let selectedCell = -1;
+/** What the last state showed, to play sounds for changes the server made. */
+let heard = { levels: [] as number[], income: 0, tick: -1, phase: "" };
 
 function show(screen: "home" | "deck" | "lobby" | "game") {
   $("home").classList.toggle("hidden", screen !== "home");
@@ -159,15 +161,18 @@ function render() {
   for (const el of document.querySelectorAll<HTMLElement>(".base")) {
     const player = bySide(sides[el.dataset.who as "me" | "them"]);
     const hp = Math.max(0, player?.baseHp ?? 0);
-    el.querySelector(".base-name")!.textContent = `${player?.name ?? "?"}${player && !player.connected ? " · left" : ""}`;
+    // Spectators see both players' gold next to their names.
+    const gold = !self && player ? ` · ${player.gold} gold` : "";
+    el.querySelector(".base-name")!.textContent = `${player?.name ?? "?"}${player && !player.connected ? " · left" : ""}${gold}`;
     el.querySelector(".base-hp")!.textContent = String(hp);
     el.querySelector<HTMLElement>(".fill")!.style.width = `${(100 * hp) / BASE_HP}%`;
   }
   $("match-time").textContent = clock(Math.max(0, MATCH_TICKS - s.tick));
   $("wave-time").textContent = `Next wave ${Math.ceil((WAVE_TICKS - (s.tick % WAVE_TICKS)) / TICK_RATE)} s`;
 
+  renderer.mySide = sides.me;
+  renderer.interactive = !!self;
   if (self) {
-    renderer.mySide = self.side;
     $("gold").textContent = `${self.gold} gold`;
     const shrine = s.shrineOwner === self.side ? SHRINE.income : 0;
     $("income").textContent = `+${self.income + shrine}/s`;
@@ -176,11 +181,15 @@ function render() {
     $("invest").textContent = `Invest ${self.investCost} → +1/s`;
     $<HTMLButtonElement>("invest").disabled = self.gold < self.investCost;
     renderHand(self, s.tick);
+    if (selectedCell !== -1 && !self.grid[selectedCell]) selectPad(-1);
+    renderSell(self);
   }
-  playStateSounds(s, self);
-  renderer.setGrid([...(self?.grid ?? [])]);
+  const board = (p?: PlayerState): Board => ({ grid: [...(p?.grid ?? [])], levels: [...(p?.levels ?? [])] });
+  // Spectators see both build grids, side 0 on the left.
+  renderer.setBoards(board(self ?? bySide(0)), self ? null : board(bySide(1)));
   renderer.setShrine(s.shrineOwner, s.shrineControl);
   renderer.setUnits([...s.units.values()]);
+  playStateSounds(s, self);
 
   $("result").classList.toggle("hidden", s.phase !== "finished");
   if (s.phase === "finished") {
@@ -188,49 +197,6 @@ function render() {
     $("result").innerHTML = `<h1>${escapeHtml(text)}</h1><button id="home-again" class="primary">Back to start</button>`;
     $("home-again").onclick = () => void room?.leave();
     select(-1);
-  }
-}
-
-/** Sounds for state changes that have no fx event: waves, placements, investing and the result. */
-function playStateSounds(s: LanesState, self: PlayerState | undefined) {
-  const grid = (self?.grid ?? []).join(",");
-  const income = self?.income ?? 0;
-  // The first render of a match (or after rejoining) only records the state.
-  if (heard.tick !== -1 && s.tick >= heard.tick) {
-    if (s.phase === "playing" && s.tick > heard.tick) {
-      if (Math.floor(s.tick / WAVE_TICKS) > Math.floor(heard.tick / WAVE_TICKS)) sfx.wave();
-      else {
-        const secondsLeft = (t: number) => Math.ceil((WAVE_TICKS - (t % WAVE_TICKS)) / TICK_RATE);
-        const left = secondsLeft(s.tick);
-        if (left <= 3 && left < secondsLeft(heard.tick)) sfx.tick();
-      }
-    }
-    if (s.phase === "playing" && heard.phase === "playing") {
-      if (grid !== heard.grid) sfx.place();
-      if (income > heard.income) sfx.invest();
-    }
-    if (s.phase === "finished" && heard.phase !== "finished") {
-      if (s.winner === self?.side) sfx.win();
-      else if (self && s.winner !== DRAW) sfx.lose();
-      else sfx.wave();
-    }
-  }
-  heard = { tick: s.tick, grid, income, phase: s.phase };
-}
-
-function playFxSounds(events: Fx[]) {
-  const mySide = me()?.side ?? -1;
-  for (const fx of events) {
-    if (fx.type === "hit") {
-      if (fx.id === 0) sfx.turret();
-      else if (fx.splash > 0) sfx.splash();
-      else if (fx.ranged) sfx.shot();
-      else sfx.melee();
-    } else if (fx.type === "heal") sfx.heal();
-    else if (fx.type === "death") sfx.death(fx.side === mySide);
-    else if (fx.type === "breach") sfx.breach(1 - fx.side === mySide);
-    else if (fx.type === "spell") sfx.spell(fx.card);
-    else if (fx.type === "shrine" && fx.owner !== -1) sfx.shrine(mySide === -1 || fx.owner === mySide);
   }
 }
 
@@ -289,9 +255,78 @@ function roleIcon(role: Role): string {
 
 function select(slot: number) {
   selected = slot;
+  if (slot !== -1) selectPad(-1);
   renderer.placing = slot === -1 ? "" : (me()?.hand[slot] ?? "");
-  $("hint").textContent = slot === -1 ? "" : "Click a pad on your grid to place it · Esc to cancel";
+  const name = CARDS[renderer.placing]?.name;
+  $("hint").textContent =
+    slot === -1 ? "" : `Click an empty pad to place it, or a ${name} below level ${MAX_LEVEL} to level it up · Esc to cancel`;
   for (let i = 0; i < HAND_SIZE; i++) $("hand").children[i]?.classList.toggle("selected", i === selected);
+}
+
+/** Picks one of your pads to sell, or -1 to clear. */
+function selectPad(cell: number) {
+  selectedCell = cell;
+  renderer.selectedCell = cell;
+  if (cell !== -1 && selected !== -1) select(-1);
+  if (cell !== -1) sfx.select();
+  const self = me();
+  if (self) renderSell(self);
+}
+
+function renderSell(self: PlayerState) {
+  const card = self.grid[selectedCell] ?? "";
+  $("sell").classList.toggle("hidden", !card);
+  if (card) $("sell").textContent = `Sell ${CARDS[card].name} +${sellValue(card, self.levels[selectedCell])}`;
+  if (selected === -1) $("hint").textContent = card ? "S or the Sell button to sell · Esc to cancel" : "";
+}
+
+function sellPad(cell: number) {
+  if (!room || room.state.phase !== "playing" || !me()?.grid[cell]) return;
+  room.send("sell", { cell });
+  selectPad(-1);
+}
+
+/** Sounds for battle events; each kind is rate-limited in audio.ts. */
+function playFx(events: Fx[]) {
+  for (const fx of events) {
+    if (fx.type === "hit") {
+      if (fx.id === 0) sfx.turret();
+      else if (fx.splash) sfx.blast();
+      else if (fx.ranged) sfx.shot();
+      else sfx.melee();
+    } else if (fx.type === "heal") sfx.heal();
+    else if (fx.type === "death") sfx.death(fx.side === renderer.mySide);
+    else if (fx.type === "breach") sfx.breach(fx.side !== renderer.mySide);
+    else if (fx.type === "spell") sfx.spell(fx.card);
+    else if (fx.type === "shrine" && fx.owner !== -1) sfx.shrine(fx.owner === renderer.mySide);
+  }
+}
+
+/** Sounds for changes that only show up in the state: your own placements, sales and investments, waves, the result. */
+function playStateSounds(s: LanesState, self: PlayerState | undefined) {
+  const levels = [...(self?.levels ?? [])];
+  const income = self?.income ?? 0;
+  // The first render of a match (or after rejoining) only records the state.
+  if (heard.phase === "playing" && s.tick >= heard.tick) {
+    for (let cell = 0; cell < levels.length; cell++) {
+      const before = heard.levels[cell] ?? 0;
+      if (levels[cell] > before) before === 0 ? sfx.place() : sfx.levelUp(levels[cell]);
+      else if (levels[cell] < before) sfx.sell();
+    }
+    if (income > heard.income) sfx.invest();
+    if (Math.floor(s.tick / WAVE_TICKS) > Math.floor(heard.tick / WAVE_TICKS)) sfx.wave();
+    else if (s.phase === "playing" && s.tick > heard.tick) {
+      const secondsLeft = (t: number) => Math.ceil((WAVE_TICKS - (t % WAVE_TICKS)) / TICK_RATE);
+      const left = secondsLeft(s.tick);
+      if (left <= 3 && left < secondsLeft(heard.tick)) sfx.tick();
+    }
+    if (s.phase === "finished") {
+      if (s.winner === self?.side) sfx.win();
+      else if (self && s.winner !== DRAW) sfx.lose();
+      else sfx.wave();
+    }
+  }
+  heard = { levels, income, tick: s.tick, phase: s.phase };
 }
 
 /** Clicking a unit card arms it for placement; clicking a spell casts it. */
@@ -303,7 +338,7 @@ function useSlot(slot: number) {
     room.send("play", { hand: slot });
   } else {
     select(selected === slot ? -1 : slot);
-    sfx.click();
+    sfx.select();
   }
 }
 
@@ -336,7 +371,7 @@ async function enter(join: () => Promise<Room<any, LanesState>>) {
   room.onStateChange(render);
   room.onMessage("fx", (events: Fx[]) => {
     renderer.addFx(events);
-    playFxSounds(events);
+    playFx(events);
   });
   room.onMessage("error", (message: string) => {
     toast(message);
@@ -344,8 +379,9 @@ async function enter(join: () => Promise<Room<any, LanesState>>) {
   });
   room.onLeave(() => {
     room = null;
-    heard = { tick: -1, grid: "", income: 0, phase: "" };
+    heard = { levels: [], income: 0, tick: -1, phase: "" };
     select(-1);
+    selectPad(-1);
     render();
   });
   render();
@@ -354,9 +390,23 @@ async function enter(join: () => Promise<Room<any, LanesState>>) {
 function main() {
   rendererReady = renderer.init($("stage"));
   renderer.onCell = (cell) => {
-    if (selected === -1 || !room) return;
-    room.send("play", { hand: selected, cell });
-    select(-1);
+    if (!room) return;
+    if (selected !== -1) {
+      if (cell === -1) return;
+      room.send("play", { hand: selected, cell });
+      select(-1);
+    } else {
+      // Clicking a built pad picks it for selling; clicking it again or anywhere else lets go.
+      selectPad(cell !== selectedCell && me()?.grid[cell] ? cell : -1);
+    }
+  };
+  renderer.onSellCell = sellPad;
+  $("sell").onclick = () => sellPad(selectedCell);
+  const showMute = () => ($("mute").textContent = isMuted() ? "🔇" : "🔊");
+  showMute();
+  $("mute").onclick = () => {
+    toggleMute();
+    showMute();
   };
   for (let i = 0; i < HAND_SIZE; i++) {
     const button = document.createElement("button");
@@ -365,14 +415,16 @@ function main() {
     $("hand").appendChild(button);
   }
   $("invest").onclick = () => room?.send("invest");
-  $("mute").textContent = isMuted() ? "🔇" : "🔊";
-  $("mute").onclick = () => ($("mute").textContent = toggleMute() ? "🔇" : "🔊");
   window.addEventListener("keydown", (e) => {
     if (draft && e.key === "Escape") return closeDeck(false);
     if (room?.state.phase !== "playing" || e.target instanceof HTMLInputElement) return;
     if (e.key >= "1" && e.key <= String(HAND_SIZE)) useSlot(Number(e.key) - 1);
-    else if (e.key === "Escape") select(-1);
-    else if (e.key.toLowerCase() === "i") room.send("invest");
+    else if (e.key === "Escape") {
+      select(-1);
+      selectPad(-1);
+    } else if (e.key.toLowerCase() === "i") room.send("invest");
+    else if (e.key.toLowerCase() === "s" && selectedCell !== -1) sellPad(selectedCell);
+    else if (e.key.toLowerCase() === "m") $("mute").click();
   });
 
   const name = () => ({ name: $<HTMLInputElement>("name").value.trim(), deck });

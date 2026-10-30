@@ -1,6 +1,6 @@
 import { Application, Container, Graphics, Text } from "pixi.js";
 import { CARDS, SIZE } from "../shared/cards";
-import { COLS, FIELD_HEIGHT, FIELD_WIDTH, type Fx, ROW_HEIGHT, ROWS, SHRINE } from "../shared/sim";
+import { COLS, FIELD_HEIGHT, FIELD_WIDTH, type Fx, MAX_LEVEL, ROW_HEIGHT, ROWS, SHRINE } from "../shared/sim";
 
 export const PALETTE = {
   page: 0x1e2230,
@@ -10,6 +10,8 @@ export const PALETTE = {
   padHover: 0x46527a,
   padBorder: 0x3d4766,
   target: 0xffd166,
+  blocked: 0xff6b6b,
+  level: 0xffd166,
   me: 0x4f8fe0,
   them: 0xe0624f,
   outline: 0x12141c,
@@ -33,6 +35,14 @@ export interface UnitView {
   maxHp: number;
   hasted: boolean;
   frozen: boolean;
+  level: number;
+}
+
+export interface Board {
+  /** Card id per build cell, "" when empty. */
+  grid: string[];
+  /** Level per build cell, 0 when empty. */
+  levels: number[];
 }
 
 /** What the renderer remembers about a unit between frames. */
@@ -67,7 +77,7 @@ const SLOT_WIDTH = 100;
 const PAD_SIZE = 84;
 const GRID_WIDTH = COLS * SLOT_WIDTH;
 const LEFT = GRID_WIDTH + BASE_WIDTH + 12;
-const TOTAL_WIDTH = LEFT + FIELD_WIDTH + BASE_WIDTH;
+const CELLS = ROWS * COLS;
 const HUD_TOP = 80;
 const HUD_BOTTOM = 210;
 /** Higher is snappier; positions arrive 20 times a second. */
@@ -77,9 +87,14 @@ const FLASH_SECONDS = 0.12;
 const LUNGE_SECONDS = 0.16;
 const SPAWN_SECONDS = 0.2;
 
-/** Left edge of a build pad slot. Column COLS - 1 sits next to the base. */
-function slotX(col: number): number {
-  return -LEFT + col * SLOT_WIDTH;
+/** Left edge of a build pad slot on the left (0) or right (1) board. Column COLS - 1 sits next to the base. */
+function slotX(board: number, col: number): number {
+  return board === 0 ? -LEFT + col * SLOT_WIDTH : FIELD_WIDTH + LEFT - (col + 1) * SLOT_WIDTH;
+}
+
+/** Left edge of a build pad. */
+function padX(board: number, cell: number): number {
+  return slotX(board, cell % COLS) + (SLOT_WIDTH - PAD_SIZE) / 2;
 }
 
 export class Renderer {
@@ -96,7 +111,12 @@ export class Renderer {
   private active: ActiveFx[] = [];
   private floating: Floater[] = [];
   private latest: UnitView[] = [];
-  private myGrid: string[] = [];
+  /** Left and right build grids; the right one only shows while `showBoth` is set. */
+  private boards: [Board, Board] = [
+    { grid: [], levels: [] },
+    { grid: [], levels: [] },
+  ];
+  private showBoth = false;
   private shrine = { owner: -1, control: 0 };
   private hoverCell = -1;
   private shake = 0;
@@ -108,7 +128,13 @@ export class Renderer {
   mySide = 0;
   /** The unit card waiting for a pad, or "" when nothing is being placed. */
   placing = "";
+  /** Own pad picked for selling, or -1. */
+  selectedCell = -1;
+  /** Whether the left pads react to the mouse; off for spectators. */
+  interactive = true;
+  /** Left click: a pad, or -1 for anywhere else. */
   onCell: (cell: number) => void = () => {};
+  onSellCell: (cell: number) => void = () => {};
 
   async init(parent: HTMLElement): Promise<void> {
     await this.app.init({
@@ -121,10 +147,11 @@ export class Renderer {
     parent.appendChild(this.app.canvas);
     this.world.addChild(this.field, this.grid, this.labels, this.units, this.effects, this.floaters);
     this.app.stage.addChild(this.world);
-    for (let cell = 0; cell < ROWS * COLS; cell++) {
+    for (let i = 0; i < 2 * CELLS; i++) {
+      const [board, cell] = [Math.floor(i / CELLS), i % CELLS];
       const label = new Text({ text: "", style: { fontFamily: "Segoe UI, sans-serif", fontSize: 13, fontWeight: "600", fill: 0xc9d0e0 } });
       label.anchor.set(0.5, 0);
-      label.position.set(slotX(cell % COLS) + SLOT_WIDTH / 2, padTop(cell) + PAD_SIZE - 20);
+      label.position.set(padX(board, cell) + PAD_SIZE / 2, padTop(cell) + PAD_SIZE - 20);
       this.padLabels.push(label);
       this.labels.addChild(label);
     }
@@ -134,13 +161,16 @@ export class Renderer {
 
     this.app.stage.eventMode = "static";
     this.app.stage.hitArea = this.app.screen;
+    this.app.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     this.app.stage.on("pointermove", (e) => {
       this.hoverCell = this.cellAt(this.world.toLocal(e.global));
-      this.app.canvas.style.cursor = this.hoverCell !== -1 && this.placing ? "pointer" : "";
+      const clickable = this.hoverCell !== -1 && (this.placing !== "" || !!this.boards[0].grid[this.hoverCell]);
+      this.app.canvas.style.cursor = clickable ? "pointer" : "";
     });
     this.app.stage.on("pointerdown", (e) => {
       const cell = this.cellAt(this.world.toLocal(e.global));
-      if (cell !== -1) this.onCell(cell);
+      if (e.button !== 2) this.onCell(cell);
+      else if (cell !== -1) this.onSellCell(cell);
     });
     this.app.ticker.add((ticker) => this.frame(Math.min(0.1, ticker.deltaMS / 1000)));
   }
@@ -149,8 +179,14 @@ export class Renderer {
     this.latest = units;
   }
 
-  setGrid(grid: string[]): void {
-    this.myGrid = grid;
+  /** `right` is the opponent's board, shown to spectators; null shows only the left one. */
+  setBoards(left: Board, right: Board | null): void {
+    this.boards[0] = left;
+    if (right) this.boards[1] = right;
+    if (this.showBoth !== !!right) {
+      this.showBoth = !!right;
+      this.fit();
+    }
   }
 
   setShrine(owner: number, control: number): void {
@@ -189,7 +225,7 @@ export class Renderer {
 
   /** Screen position of the centre of one of the local player's build pads. */
   cellOnScreen(cell: number): { x: number; y: number } {
-    const p = this.world.toGlobal({ x: slotX(cell % COLS) + SLOT_WIDTH / 2, y: padTop(cell) + PAD_SIZE / 2 });
+    const p = this.world.toGlobal({ x: padX(0, cell) + PAD_SIZE / 2, y: padTop(cell) + PAD_SIZE / 2 });
     return { x: p.x, y: p.y };
   }
 
@@ -202,9 +238,11 @@ export class Renderer {
     return side === this.mySide ? PALETTE.me : PALETTE.them;
   }
 
+  /** The local player's pad under a point, or -1. */
   private cellAt(p: { x: number; y: number }): number {
-    for (let cell = 0; cell < ROWS * COLS; cell++) {
-      const x = slotX(cell % COLS) + (SLOT_WIDTH - PAD_SIZE) / 2;
+    if (!this.interactive) return -1;
+    for (let cell = 0; cell < CELLS; cell++) {
+      const x = padX(0, cell);
       const y = padTop(cell);
       if (p.x >= x && p.x < x + PAD_SIZE && p.y >= y && p.y < y + PAD_SIZE) return cell;
     }
@@ -228,23 +266,44 @@ export class Renderer {
   private drawGrid(): void {
     const g = this.grid.clear();
     const pulse = 0.55 + 0.45 * Math.sin(this.time * 6);
-    for (let cell = 0; cell < ROWS * COLS; cell++) {
-      const x = slotX(cell % COLS) + (SLOT_WIDTH - PAD_SIZE) / 2;
-      const y = padTop(cell);
-      const hover = cell === this.hoverCell && this.placing !== "";
-      g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 12).fill(hover ? PALETTE.padHover : PALETTE.pad);
-      if (this.placing) g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 12).stroke({ color: PALETTE.target, width: 2, alpha: hover ? 1 : 0.35 * pulse });
-      else g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 12).stroke({ color: PALETTE.padBorder, width: 1 });
+    for (let board = 0; board < 2; board++) {
+      const { grid, levels } = this.boards[board];
+      const color = board === 0 ? PALETTE.me : PALETTE.them;
+      for (let cell = 0; cell < CELLS; cell++) {
+        const label = this.padLabels[board * CELLS + cell];
+        label.visible = board === 0 || this.showBoth;
+        if (!label.visible) continue;
+        const x = padX(board, cell);
+        const y = padTop(cell);
+        const card = grid[cell] ?? "";
+        const level = levels[cell] ?? 0;
+        const mine = board === 0 && this.interactive;
+        // While placing, a pad takes the card if it is empty or holds the same card below max level.
+        const fits = mine && this.placing !== "" && (!card || (card === this.placing && level < MAX_LEVEL));
+        const hover = mine && cell === this.hoverCell && (this.placing !== "" || card !== "");
+        const blocked = hover && this.placing !== "" && !fits;
+        g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 12).fill(hover && !blocked ? PALETTE.padHover : PALETTE.pad);
+        if (mine && cell === this.selectedCell) g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 12).stroke({ color: PALETTE.white, width: 3 });
+        else if (blocked) g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 12).stroke({ color: PALETTE.blocked, width: 2 });
+        else if (fits) g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 12).stroke({ color: PALETTE.target, width: 2, alpha: hover ? 1 : 0.35 * pulse });
+        else g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 12).stroke({ color: PALETTE.padBorder, width: 1 });
 
-      const card = this.myGrid[cell] ?? "";
-      const cx = x + PAD_SIZE / 2;
-      const cy = y + PAD_SIZE / 2 - 8;
-      if (hover) drawShape(g, this.placing, cx, cy, PALETTE.me, 1.15, 0.5);
-      else if (card) drawShape(g, card, cx, cy, PALETTE.me, 1.15);
-      else g.rect(cx - 6, cy + 7, 12, 2).fill({ color: PALETTE.padBorder }).rect(cx - 1, cy + 2, 2, 12).fill({ color: PALETTE.padBorder });
-      const name = hover ? (CARDS[this.placing]?.name ?? "") : (CARDS[card]?.name ?? "");
-      if (this.padLabels[cell].text !== name) this.padLabels[cell].text = name;
-      this.padLabels[cell].alpha = hover ? 0.6 : 1;
+        // Hovering a pad that takes the card previews it there, one level up.
+        const preview = hover && fits;
+        const shown = preview ? this.placing : card;
+        const shownLevel = preview ? level + 1 : level;
+        const cx = x + PAD_SIZE / 2;
+        const cy = y + PAD_SIZE / 2 - 6;
+        if (shown) {
+          drawShape(g, shown, cx, cy, color, 1.05 + 0.1 * shownLevel, preview && !card ? 0.5 : 1);
+          drawPips(g, cx, y + 9, shownLevel, MAX_LEVEL, preview);
+        } else {
+          g.rect(cx - 6, cy + 7, 12, 2).fill({ color: PALETTE.padBorder }).rect(cx - 1, cy + 2, 2, 12).fill({ color: PALETTE.padBorder });
+        }
+        const name = CARDS[shown]?.name ?? "";
+        if (label.text !== name) label.text = name;
+        label.alpha = preview ? 0.6 : 1;
+      }
     }
   }
 
@@ -273,7 +332,7 @@ export class Renderer {
       const reach = Math.sin((Math.PI * s.lunge) / LUNGE_SECONDS) * 9;
       const x = s.x + s.lungeX * reach;
       const y = s.y + s.lungeY * reach;
-      const scale = Math.min(1, 0.4 + (0.6 * s.age) / SPAWN_SECONDS);
+      const scale = Math.min(1, 0.4 + (0.6 * s.age) / SPAWN_SECONDS) * (1 + 0.15 * (u.level - 1));
       const r = SIZE[roleOf(u.card)] * scale;
       const color = this.color(u.side);
 
@@ -285,6 +344,7 @@ export class Renderer {
       }
       drawShape(g, u.card, x, y, u.frozen ? PALETTE.frost : color, scale, 1, true);
       if (s.flash > 0) drawShape(g, u.card, x, y, PALETTE.white, scale, s.flash / FLASH_SECONDS);
+      if (u.level > 1) drawPips(g, x, y + r + 7, u.level, u.level, false);
       if (u.hp < u.maxHp) {
         const w = Math.max(24, r * 2);
         g.rect(x - w / 2 - 1, y - r - 11, w + 2, 6).fill(PALETTE.hpBack);
@@ -413,6 +473,7 @@ export class Renderer {
     const g = this.field.clear();
     // Deploy zone behind your base, with each lane running from your pads to the enemy base.
     g.roundRect(-LEFT - 8, -8, GRID_WIDTH + 16, FIELD_HEIGHT + 16, 16).fill(PALETTE.zone);
+    if (this.showBoth) g.roundRect(FIELD_WIDTH + LEFT - GRID_WIDTH - 8, -8, GRID_WIDTH + 16, FIELD_HEIGHT + 16, 16).fill(PALETTE.zone);
     for (let row = 0; row < ROWS; row++) {
       g.rect(0, row * ROW_HEIGHT, FIELD_WIDTH, ROW_HEIGHT).fill(PALETTE.lane[row % 2]);
       for (let x = 60; x < FIELD_WIDTH; x += 120) {
@@ -447,8 +508,9 @@ export class Renderer {
     const k = Math.abs(control) / SHRINE.captureTicks;
     if (k > 0 && k < 1) {
       const toward = control > 0 ? 0 : 1;
+      // Start a fresh sub-path at the top; otherwise Pixi joins the arc to the previous shape with a stray line.
       const start = -Math.PI / 2;
-      g.arc(x, SHRINE.y, r, start, start + k * Math.PI * 2).stroke({ color: this.color(toward), width: 5, alpha: 0.9 });
+      g.moveTo(x, SHRINE.y - r).arc(x, SHRINE.y, r, start, start + k * Math.PI * 2).stroke({ color: this.color(toward), width: 5, alpha: 0.9 });
     }
     const s = 14 + Math.sin(this.time * 3) * 1.5;
     g.poly([x, SHRINE.y - s, x + s * 0.7, SHRINE.y, x, SHRINE.y + s, x - s * 0.7, SHRINE.y])
@@ -458,11 +520,15 @@ export class Renderer {
 
   private fit(): void {
     const { width, height } = this.app.screen;
-    const scale = Math.min((width - 32) / TOTAL_WIDTH, (height - HUD_TOP - HUD_BOTTOM) / (FIELD_HEIGHT + 20));
+    // Spectators see both grids; a player sees only their own, so the enemy base ends the view.
+    const total = LEFT + FIELD_WIDTH + (this.showBoth ? LEFT : BASE_WIDTH);
+    // Spectators have no hand, so the field can use the space at the bottom.
+    const bottom = this.interactive ? HUD_BOTTOM : HUD_TOP;
+    const scale = Math.min((width - 32) / total, (height - HUD_TOP - bottom) / (FIELD_HEIGHT + 20));
     this.world.scale.set(scale);
     this.origin = {
-      x: (width - TOTAL_WIDTH * scale) / 2 + LEFT * scale,
-      y: HUD_TOP + (height - HUD_TOP - HUD_BOTTOM - FIELD_HEIGHT * scale) / 2,
+      x: (width - total * scale) / 2 + LEFT * scale,
+      y: HUD_TOP + (height - HUD_TOP - bottom - FIELD_HEIGHT * scale) / 2,
     };
     this.world.position.set(this.origin.x, this.origin.y);
   }
@@ -470,6 +536,18 @@ export class Renderer {
 
 function padTop(cell: number): number {
   return Math.floor(cell / COLS) * ROW_HEIGHT + (ROW_HEIGHT - PAD_SIZE) / 2;
+}
+
+/** Level dots centred on x: `level` filled, the rest of `slots` hollow; `preview` dims the newest one. */
+function drawPips(g: Graphics, x: number, y: number, level: number, slots: number, preview: boolean): void {
+  const small = slots === level;
+  const gap = small ? 7 : 10;
+  const r = small ? 2.5 : 3.5;
+  for (let i = 0; i < slots; i++) {
+    const px = x + (i - (slots - 1) / 2) * gap;
+    if (i < level) g.circle(px, y, r).fill({ color: PALETTE.level, alpha: preview && i === level - 1 ? 0.5 : 1 });
+    else g.circle(px, y, r).stroke({ color: PALETTE.padBorder, width: 1.5 });
+  }
 }
 
 function roleOf(cardId: string) {
