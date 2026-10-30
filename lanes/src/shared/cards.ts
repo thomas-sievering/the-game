@@ -31,7 +31,13 @@ export type SpellEffect =
   | { type: "haste"; multiplier: number; ticks: number }
   | { type: "lightning"; targets: number; damage: number }
   | { type: "heal"; amount: number }
-  | { type: "freeze"; ticks: number };
+  | { type: "freeze"; ticks: number }
+  /** Strikes the enemy with the most other enemies around it, hurting everyone in the radius. */
+  | { type: "meteor"; damage: number; radius: number }
+  /** Multiplies the damage and healing of your units. */
+  | { type: "fury"; multiplier: number; ticks: number }
+  /** Spawns a unit in every lane right away. */
+  | { type: "summon"; card: string };
 
 export interface SpellCard {
   kind: "spell";
@@ -65,6 +71,9 @@ export const CARDS: Record<string, Card> = Object.fromEntries(
     spell({ id: "rally", name: "Rally", cost: 40, cooldownTicks: 400, effect: { type: "haste", multiplier: 1.5, ticks: 100 }, text: "All your units +50% speed for 5 s." }),
     spell({ id: "lightning", name: "Lightning", cost: 50, cooldownTicks: 300, effect: { type: "lightning", targets: 3, damage: 60 }, text: "Hits the 3 frontmost enemies for 60." }),
     spell({ id: "mend", name: "Mend", cost: 40, cooldownTicks: 400, effect: { type: "heal", amount: 100 }, text: "Heals all your units by 100." }),
+    spell({ id: "meteor", name: "Meteor", cost: 60, cooldownTicks: 400, effect: { type: "meteor", damage: 60, radius: 80 }, text: "Smashes the biggest enemy group for 60." }),
+    spell({ id: "fury", name: "Fury", cost: 55, cooldownTicks: 500, effect: { type: "fury", multiplier: 2, ticks: 80 }, text: "Your units deal double damage for 4 s." }),
+    spell({ id: "muster", name: "Muster", cost: 50, cooldownTicks: 500, effect: { type: "summon", card: "footman" }, text: "A Footman joins every lane right now." }),
     spell({ id: "frost", name: "Frost", cost: 60, cooldownTicks: 600, effect: { type: "freeze", ticks: 60 }, text: "Freezes all enemy units for 3 s." }),
   ].map((card) => [card.id, card]),
 );

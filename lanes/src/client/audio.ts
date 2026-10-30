@@ -125,6 +125,13 @@ export const sfx = {
       tone(523, 0.25, 0.08, "sine");
       tone(659, 0.25, 0.08, "sine", 0.08);
       tone(784, 0.35, 0.08, "sine", 0.16);
+    } else if (card === "meteor") {
+      tone(1400, 0.35, 0.06, "sine", 0, 200);
+      noise(0.6, 0.9, 260, 0.5, "lowpass", 0.3);
+      tone(80, 0.5, 0.35, "sine", 0.3, 35);
+    } else if (card === "fury") {
+      tone(110, 0.4, 0.14, "sawtooth", 0, 220);
+      tone(165, 0.4, 0.1, "sawtooth", 0.05, 330);
     } else {
       tone(392, 0.12, 0.1, "square", 0, 520);
       tone(523, 0.18, 0.1, "square", 0.1, 784);
@@ -152,12 +159,14 @@ export const sfx = {
     tone(330, 0.07, 0.12, "square", 0, 220);
     noise(0.06, 0.2, 900, 1);
   },
-  levelUp(level: number) {
-    for (let i = 0; i <= level; i++) tone(440 * (1 + i * 0.25), 0.12, 0.09, "triangle", i * 0.07);
-  },
   sell() {
     tone(1047, 0.08, 0.08, "square");
     tone(1319, 0.14, 0.08, "square", 0.07);
+  },
+  /** A unit on the grid went up a level; higher levels ring higher. */
+  levelUp(level: number) {
+    const base = level >= 3 ? 660 : 523;
+    [base, base * 1.25, base * 1.5].forEach((f, i) => tone(f, 0.18, 0.1, "triangle", i * 0.06));
   },
   invest() {
     tone(784, 0.08, 0.08, "triangle");

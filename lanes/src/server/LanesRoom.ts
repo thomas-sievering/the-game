@@ -167,7 +167,7 @@ export class LanesRoom extends Room<{ state: LanesState }> {
       const key = String(unit.id);
       alive.add(key);
       const view = this.state.units.get(key);
-      const fields = { x: unit.x, y: unit.y, hp: unit.hp, hasted: unit.hasteTicks > 0, frozen: unit.frozenTicks > 0 };
+      const fields = { x: unit.x, y: unit.y, hp: unit.hp, hasted: unit.hasteTicks > 0, frozen: unit.frozenTicks > 0, fury: unit.furyTicks > 0 };
       if (view) Object.assign(view, fields);
       else this.state.units.set(key, new UnitState({ id: unit.id, side: unit.side, card: unit.card, maxHp: unit.maxHp, level: unit.level, ...fields }));
     }
