@@ -262,6 +262,20 @@ button.primary {
   padding: 6px 8px;
 }
 
+#sell {
+  border-color: var(--gold);
+}
+
+.mute {
+  position: absolute;
+  top: 76px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 16px;
+}
+
 button:disabled {
   opacity: 0.45;
   cursor: default;

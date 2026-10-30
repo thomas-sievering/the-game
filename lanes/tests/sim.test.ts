@@ -9,6 +9,7 @@ import {
   HAND_SIZE,
   INVEST_COST,
   MATCH_TICKS,
+  MAX_LEVEL,
   START_GOLD,
   SHRINE,
   START_INCOME,
@@ -19,6 +20,8 @@ import {
   invest,
   play,
   rowCenter,
+  scaled,
+  sell,
   spawnUnit,
   step,
 } from "../src/shared/sim";
@@ -54,6 +57,8 @@ describe("hand and deck", () => {
     player.gold = 100_000;
     for (let i = 0; i < 25; i++) {
       battle.tick += 1000; // keep spells off cooldown
+      player.grid.fill(""); // keep the pad free
+      player.levels.fill(0);
       expect(play(battle, 0, 0, 0)).toBeNull();
       expect(player.hand.every(Boolean)).toBe(true);
       expect(player.hand.length + player.deck.length + player.discard.length).toBe(STARTER_DECK.length);
@@ -150,13 +155,59 @@ describe("placement and waves", () => {
     expect(battle.units.filter((u) => u.card === "footman").length).toBeGreaterThanOrEqual(3);
   });
 
-  it("placing on an occupied cell replaces the unit", () => {
+  it("a pad holding another card refuses a new unit", () => {
     const battle = createBattle();
     give(battle, 0, "footman");
     play(battle, 0, 0, 5);
     give(battle, 0, "brute");
-    play(battle, 0, 0, 5);
-    expect(battle.players[0].grid[5]).toBe("brute");
+    expect(play(battle, 0, 0, 5)).toMatch(/sell it first/);
+    expect(battle.players[0].grid[5]).toBe("footman");
+    expect(battle.players[0].gold).toBe(1000);
+  });
+
+  it("playing the same card on its pad levels it up to the max", () => {
+    const battle = createBattle();
+    const player = battle.players[0];
+    for (let level = 1; level <= MAX_LEVEL; level++) {
+      give(battle, 0, "footman");
+      expect(play(battle, 0, 0, 5)).toBeNull();
+      expect(player.levels[5]).toBe(level);
+    }
+    give(battle, 0, "footman");
+    expect(play(battle, 0, 0, 5)).toMatch(/max level/);
+    expect(player.gold).toBe(1000);
+  });
+
+  it("selling a pad refunds half of what its levels cost", () => {
+    const battle = createBattle();
+    const player = battle.players[0];
+    give(battle, 0, "archer");
+    play(battle, 0, 0, 2);
+    give(battle, 0, "archer");
+    play(battle, 0, 0, 2);
+    const gold = player.gold;
+    expect(sell(battle, 0, 2)).toBeNull();
+    expect(player.gold).toBe(gold + CARDS.archer.cost);
+    expect(player.grid[2]).toBe("");
+    expect(player.levels[2]).toBe(0);
+    expect(sell(battle, 0, 2)).toMatch(/Nothing/);
+    give(battle, 0, "brute");
+    expect(play(battle, 0, 0, 2)).toBeNull();
+  });
+
+  it("levelled units spawn with more health", () => {
+    expect(scaled(25, 1)).toBe(25);
+    expect(scaled(25, 2)).toBe(37);
+    expect(scaled(25, 3)).toBe(50);
+    const battle = createBattle();
+    for (let i = 0; i < 3; i++) {
+      give(battle, 0, "brute");
+      play(battle, 0, 0, 0);
+    }
+    run(battle, WAVE_TICKS);
+    const [brute] = battle.units;
+    expect(brute.level).toBe(3);
+    expect(brute.maxHp).toBe(unitCard("brute").hp * 2);
   });
 
   it("swarm spawns three units", () => {
