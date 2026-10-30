@@ -64,11 +64,23 @@ function renderLobby(s: FarmState) {
   show("lobby");
   $("lobby-code").textContent = s.code;
   const isHost = s.hostId === room!.sessionId;
-  const tag = (id: string) => (id === s.hostId ? '<span class="tag">host</span>' : "");
+  const seatFree = s.players.length < 2;
+  /** Host tag plus, for the host, a button that moves the person to the other list. */
+  const rowEnd = (id: string, spectate: boolean) => {
+    const tag = id === s.hostId ? '<span class="tag">host</span>' : "";
+    const move =
+      isHost && (spectate || seatFree)
+        ? `<button data-id="${escapeHtml(id)}" data-spectate="${spectate}">${spectate ? "Spectate" : "Play"}</button>`
+        : "";
+    return `<span class="row-end">${tag}${move}</span>`;
+  };
   $("lobby-players-title").textContent = `Farmers ${s.players.length}/2`;
-  $("lobby-players").innerHTML = [...s.players].map((p) => `<li>${escapeHtml(p.name)}${tag(p.id)}</li>`).join("");
-  $("lobby-spectators").innerHTML = [...s.spectators].map((sp) => `<li>👁 ${escapeHtml(sp.name)}${tag(sp.id)}</li>`).join("");
+  $("lobby-players").innerHTML = [...s.players].map((p) => `<li>${escapeHtml(p.name)}${rowEnd(p.id, true)}</li>`).join("");
+  $("lobby-spectators").innerHTML = [...s.spectators].map((sp) => `<li>👁 ${escapeHtml(sp.name)}${rowEnd(sp.id, false)}</li>`).join("");
   $("lobby-spectators-box").classList.toggle("hidden", s.spectators.length === 0);
+  for (const button of document.querySelectorAll<HTMLButtonElement>("#lobby button[data-id]")) {
+    button.onclick = () => room?.send("spectate", { id: button.dataset.id, spectate: button.dataset.spectate === "true" });
+  }
   $("start").classList.toggle("hidden", !isHost || s.players.length !== 2);
   const spectating = !me() ? "You're spectating. " : "";
   $("lobby-wait").textContent =
