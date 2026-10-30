@@ -78,6 +78,21 @@ export class FarmRoom extends Room<{ state: FarmState }> {
         this.finishIfOver(farm);
         return null;
       }),
+
+    /** Host action in the lobby: moves someone between the farmers and the spectators. */
+    spectate: (client: Client, message: { id?: unknown; spectate?: unknown }) => {
+      if (client.sessionId !== this.state.hostId || this.state.phase !== "lobby") return;
+      const id = String(message?.id);
+      const player = this.state.players.find((p) => p.id === id);
+      const spectator = this.state.spectators.find((sp) => sp.id === id);
+      if (message?.spectate === true && player) {
+        this.state.players.splice(this.state.players.indexOf(player), 1);
+        this.state.spectators.push(new SpectatorState({ id, name: player.name }));
+      } else if (message?.spectate === false && spectator && this.state.players.length < 2) {
+        this.state.spectators.splice(this.state.spectators.indexOf(spectator), 1);
+        this.addPlayer(id, spectator.name);
+      }
+    },
   };
 
   /** Applies a player's action to the farm, reporting a refusal back to them. */
@@ -116,13 +131,14 @@ export class FarmRoom extends Room<{ state: FarmState }> {
     }
     if (player || this.state.spectators.some(sameName)) throw new Error("That name is already taken in this room");
     // Joins as a player while the lobby has a seat; otherwise (full or mid-match) as a spectator.
-    if (this.state.phase === "lobby" && this.state.players.length < 2) {
-      const side = this.state.players.some((p) => p.side === 0) ? 1 : 0;
-      this.state.players.push(new PlayerState({ id: client.sessionId, name, side }));
-    } else {
-      this.state.spectators.push(new SpectatorState({ id: client.sessionId, name }));
-    }
+    if (this.state.phase === "lobby" && this.state.players.length < 2) this.addPlayer(client.sessionId, name);
+    else this.state.spectators.push(new SpectatorState({ id: client.sessionId, name }));
     if (!this.state.hostId) this.state.hostId = client.sessionId;
+  }
+
+  private addPlayer(id: string, name: string) {
+    const side = this.state.players.some((p) => p.side === 0) ? 1 : 0;
+    this.state.players.push(new PlayerState({ id, name, side }));
   }
 
   onDrop(client: Client) {

@@ -9,6 +9,7 @@ type Farm = {
   contracts: { id: number; items: { crop: string; count: number }[] }[];
   tiles: { owner: number; terrain: string; crop: string; growth: number; weeds: boolean }[];
   winner: number;
+  spectating: boolean;
   tileOnScreen: (tile: number) => { x: number; y: number };
 };
 
@@ -107,4 +108,40 @@ test("two farmers buy land, grow, sell, fill an order and sabotage", async ({ br
   }
   await expect(bob.locator("#result h1")).toHaveText("You win!");
   await alice.screenshot({ path: shots("6-result") });
+});
+
+test("the host moves themselves to spectators and starts a match they watch", async ({ browser }) => {
+  // Three pages render the farm at once, which is slow on CI's software WebGL.
+  test.setTimeout(300_000);
+  const [alice, bob, carol] = await Promise.all([0, 1, 2].map(async () => (await browser.newContext()).newPage()));
+
+  await alice.goto("/");
+  await alice.fill("#name", "Alice");
+  await alice.click("#create");
+  await expect(alice.locator("#lobby-code")).toHaveText(/^[A-Z]{4}$/);
+  const code = await alice.locator("#lobby-code").innerText();
+  for (const [page, name] of [
+    [bob, "Bob"],
+    [carol, "Carol"],
+  ] as const) {
+    await page.goto("/");
+    await page.fill("#name", name);
+    await page.fill("#code", code);
+    await page.click("#join");
+  }
+  // The room is full, so Carol spectates; only the host gets move buttons.
+  await expect(alice.locator("#lobby-spectators li", { hasText: "Carol" })).toBeVisible();
+  await expect(bob.locator("#lobby button[data-id]")).toHaveCount(0);
+
+  await alice.locator("#lobby-players li", { hasText: "Alice" }).getByRole("button", { name: "Spectate" }).click();
+  await alice.locator("#lobby-spectators li", { hasText: "Carol" }).getByRole("button", { name: "Play" }).click();
+  await expect(alice.locator("#lobby-players li")).toHaveText([/Bob/, /Carol/]);
+  await alice.screenshot({ path: shots("spectate-1-lobby") });
+
+  await alice.click("#start");
+  for (const page of [alice, bob, carol]) await expect.poll(() => farm(page, (f) => f.phase)).toBe("playing");
+  expect(await farm(alice, (f) => f.spectating)).toBe(true);
+  expect(await farm(carol, (f) => f.spectating)).toBe(false);
+  await expect(alice.locator("#spectating")).toBeVisible();
+  await alice.screenshot({ path: shots("spectate-2-watching") });
 });
