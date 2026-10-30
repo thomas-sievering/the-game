@@ -55,8 +55,12 @@ Thomas confirmed these on 2026-10-30 ("fine for now"); numbers are tuning, not p
   - **Crows:** eat the crops on 3 random enemy tiles, ripe ones first. A scarecrow protects tiles within 2.
   - **Weeds:** a 2×2 area of enemy tiles grows at half speed for 30 s. Cleared early by clicking each tile.
   - **Market dump:** throw away 3 of a crop to crash its price to the floor and freeze it there for 20 s.
-- **Net worth:** coins + each owned tile at its purchase price + each building at half its cost. Barn stock counts at the current market price, and a planted crop at that price in proportion to how far it has grown. Ties are a draw.
+- **Tech tree:** added 2026-10-30 at Thomas's request ("simple but logical"). Three branches of three steps, bought with coins; each step needs the one above it. Each player's tree is visible to everyone: click a farmer's 🔬 badge (spectators too), or press T.
+  - **Growing:** Fertilizer (60, crops grow 25% faster) → Irrigation (100, your wells water 2 tiles out) → Hybrid seeds (200, harvests from your rich soil give 2 crops).
+  - **Trade:** Haggling (50, sell for 10% more) → Guild (90, orders pay 25% more) → Wholesale (160, your sales lower the price half as much).
+  - **Homestead:** Surveying (60, land price rises 3 per tile instead of 5) → Fences (90, buying out your land costs 3× instead of 2×) → Farm dogs (140, crows take 1 crop; weeds wear off twice as fast).
+- **Net worth:** coins + each owned tile at its purchase price + each building and each researched tech at half its cost. Barn stock counts at the current market price, and a planted crop at that price in proportion to how far it has grown. Ties are a draw.
 - **Start:** 2×2 owned tiles in each corner, a pond that waters half of them, and 60 coins. Wheat seed is free for a player who can't afford it and has nothing growing or stored, so nobody gets stuck.
 - **Networking:** the server runs the sim at a fixed 10 ticks/s and syncs tile and market state. The client sends actions (buy, plant, harvest, sell, build, sabotage, fill contract) and renders the synced state.
 - **Rooms:** create → 4-letter code → B joins → host starts. Extra visitors spectate. In the lobby the host can move anyone, themselves included, between farmers and spectators; the host may be a spectator. A disconnected player has 60 s to rejoin (same code and name), otherwise they forfeit. Either player can give up.
-- **Look & sound:** flat top-down tiles drawn in code, warm farm palette distinct from minigolf and lanes, each player's land outlined in their colour. Small pop effects on harvest, sale and sabotage, and a few synthesized sounds.
+- **Look & sound:** retro top-down pixel art drawn in code (16 px tiles scaled up crisply), warm farm palette distinct from minigolf and lanes, each player's land outlined in their colour. Small pop effects on harvest, sale and sabotage, and a few synthesized sounds.

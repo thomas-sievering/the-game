@@ -87,6 +87,9 @@ export const sfx = {
   dump() {
     tone(440, 0.4, 0.15, "square", 0, 110);
   },
+  research() {
+    for (const [i, freq] of [392, 494, 587, 784].entries()) tone(freq, 0.18, 0.12, "sine", i * 0.07);
+  },
   error() {
     tone(160, 0.12, 0.12, "square");
   },

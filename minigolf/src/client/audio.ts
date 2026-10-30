@@ -175,6 +175,16 @@ export const sfx = {
     tone(523, 0.18, 0.2, "triangle", 0.1);
     tone(784, 0.35, 0.18, "triangle", 0.2);
   },
+  bumper(speed: number) {
+    const v = Math.min(1, speed / 700);
+    tone(260 + v * 120, 0.16, 0.16 + v * 0.1, "sine", 0, 640 + v * 260);
+    tone(980, 0.05, 0.06, "triangle");
+  },
+  mover(speed: number) {
+    const v = Math.min(1, speed / 600);
+    tone(180 + v * 60, 0.09, 0.08 + v * 0.2, "triangle", 0, 110);
+    noise(0.04, 0.1 + v * 0.25, 900, 1.2);
+  },
   splash() {
     noise(0.45, 0.6, 700, 0.6);
     tone(300, 0.25, 0.08, "sine", 0, 120);

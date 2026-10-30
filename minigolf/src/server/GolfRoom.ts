@@ -68,7 +68,7 @@ export class GolfRoom extends Room<{ state: GolfState }> {
         return;
       }
       this.turnTimer?.clear();
-      const shot: ShotMessage = { shooterId: id, holeIndex, aim: point, start: outcome.start };
+      const shot: ShotMessage = { shooterId: id, holeIndex, aim: point, start: outcome.start, startTick: outcome.startTick };
       this.broadcast("shot", shot);
       // Hold the new state back until clients have watched the ball roll.
       this.animating = true;
@@ -207,6 +207,7 @@ export class GolfRoom extends Room<{ state: GolfState }> {
     s.holeIndex = m.holeIndex;
     s.turnId = m.turnId ?? "";
     s.turnSeq = m.turnSeq;
+    s.courseTick = m.courseTick;
 
     const sameOrder = s.players.length === m.players.length && m.players.every((p, i) => s.players[i].id === p.id);
     if (!sameOrder) {

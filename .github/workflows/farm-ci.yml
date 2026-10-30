@@ -2,13 +2,18 @@ name: Farm CI
 
 on:
   pull_request:
-    paths: [farm/**, .github/workflows/farm-*.yml]
+    paths: [farm/**, "!farm/**/*.md", .github/workflows/farm-*.yml]
   push:
     branches: [master]
-    paths: [farm/**, .github/workflows/farm-*.yml]
+    paths: [farm/**, "!farm/**/*.md", .github/workflows/farm-*.yml]
 
 permissions:
   contents: read
+
+# A new push to a PR replaces its older run.
+concurrency:
+  group: farm-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -27,15 +32,40 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # The browser tests are slow, so they run on PRs only; master is checked again after deploy.
+  # Each shard runs on its own runner (one test each today) because software WebGL pins the CPU.
+  # A test added later joins an existing shard, so nothing is skipped if this count is not bumped.
+  e2e:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    defaults:
+      run:
+        working-directory: farm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: farm/package-lock.json
+      - run: npm ci
+      - run: npm run build
       - name: End-to-end test against a local server
         run: |
           npx playwright install --with-deps chromium
           PORT=2569 node dist/server.js &
           npx wait-on -t 30000 http://localhost:2569/health
-          npm run e2e
+          npm run e2e -- --fully-parallel --shard ${{ matrix.shard }}/${{ strategy.job-total }} --reporter list
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: farm-e2e-screenshots
-          path: farm/artifacts/e2e
+          name: farm-e2e-screenshots-${{ matrix.shard }}
+          path: |
+            farm/artifacts/e2e
+            farm/test-results
           if-no-files-found: ignore
