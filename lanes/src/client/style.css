@@ -480,3 +480,10 @@ button:disabled {
   width: 32px;
   padding: 2px 0;
 }
+
+.mute {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  padding: 8px 12px;
+}
