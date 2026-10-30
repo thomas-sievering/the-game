@@ -1,7 +1,7 @@
 import { type ArraySchema, StateView } from "@colyseus/schema";
 import { type Client, Room } from "colyseus";
 import { STARTER_DECK, deckError } from "../shared/cards";
-import { type Battle, type Side, TICK_RATE, createBattle, invest, play, sell, step } from "../shared/sim";
+import { type Battle, type Side, TICK_RATE, createBattle, invest, play, research, sell, step } from "../shared/sim";
 import { LanesState, type PlayMessage, PlayerState, SpectatorState, UnitState } from "../shared/state";
 
 const CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // no I/O to avoid confusion with 1/0
@@ -49,6 +49,10 @@ export class LanesRoom extends Room<{ state: LanesState }> {
 
     invest: (client: Client) => {
       this.act(client, (battle, side) => invest(battle, side));
+    },
+
+    research: (client: Client) => {
+      this.act(client, (battle, side) => research(battle, side));
     },
 
     /** Host action in the lobby: moves someone between the players and the spectators. */
@@ -156,6 +160,8 @@ export class LanesRoom extends Room<{ state: LanesState }> {
       view.gold = player.gold;
       view.income = player.income;
       view.investCost = player.investCost;
+      view.tier = player.tier;
+      view.researchDone = player.researchDone;
       syncArray(view.hand, player.hand);
       syncArray(view.grid, player.grid);
       syncArray(view.levels, player.levels);

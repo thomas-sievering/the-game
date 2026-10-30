@@ -379,6 +379,11 @@ button:disabled {
   padding: 6px 8px;
 }
 
+#research.researching {
+  background: linear-gradient(180deg, #b9a6d8, #7a5ab0);
+  color: var(--cream);
+}
+
 #sell {
   background: linear-gradient(180deg, #ecc56c, #c08f35);
 }
@@ -498,6 +503,45 @@ button.hand-card:active:not(:disabled) {
   font-weight: 700;
   font-size: 13px;
   box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+}
+
+.hand-card .tier {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  z-index: 1;
+  min-width: 22px;
+  padding: 1px 4px;
+  border-radius: 4px 4px 9px 9px;
+  border: 1.5px solid var(--ink);
+  background: linear-gradient(180deg, #d8d2c4, #9c9484);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.hand-card .tier.t2 {
+  background: linear-gradient(180deg, #e6e9ee, #a9b2bd);
+}
+
+.hand-card .tier.t3 {
+  background: linear-gradient(180deg, #fff0b0, #d4a94f);
+}
+
+.hand-card .locked {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(42, 29, 20, 0.86);
+  border-radius: 8px;
+  color: var(--cream);
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 700;
 }
 
 .hand-card .key {

@@ -25,6 +25,12 @@ export const COLUMN_SPAWN_STEP = 15;
 export const DRAW = 2;
 /** Playing a unit card on a pad holding the same card levels it up, to at most this level. */
 export const MAX_LEVEL = 3;
+/** Researching the next tier costs gold and takes time; index is the tier being researched. Tier 3 costs more. */
+export const RESEARCH: Record<2 | 3, { cost: number; ticks: number }> = {
+  2: { cost: 250, ticks: 40 * TICK_RATE },
+  3: { cost: 500, ticks: 60 * TICK_RATE },
+};
+export const MAX_TIER = 3;
 /** Each base shoots the nearest enemy in reach. */
 export const TURRET = { damage: 25, range: 160, attackTicks: 20 };
 /** Neutral shrine in the middle of the centre lane. Units standing in it alone capture it; the owner earns extra gold per second. */
@@ -58,6 +64,10 @@ export interface Player {
   income: number;
   investCost: number;
   baseHp: number;
+  /** Highest card tier the player may play. */
+  tier: number;
+  /** Tick at which the research of the next tier finishes, 0 when not researching. */
+  researchDone: number;
   /** Draw pile; the next card is the last element. */
   deck: string[];
   hand: string[];
@@ -130,6 +140,8 @@ function createPlayer(): Player {
     income: START_INCOME,
     investCost: INVEST_COST,
     baseHp: BASE_HP,
+    tier: 1,
+    researchDone: 0,
     deck: [],
     hand: [],
     discard: [],
@@ -186,6 +198,7 @@ export function play(battle: Battle, side: Side, handIndex: number, cell?: numbe
   const player = battle.players[side];
   const card = CARDS[player.hand[handIndex] ?? ""];
   if (!card) return "No card in that slot";
+  if (card.tier > player.tier) return `${card.name} needs tier ${card.tier}`;
   if (card.kind === "unit") {
     if (cell === undefined || !Number.isInteger(cell) || cell < 0 || cell >= ROWS * COLS) return "Pick a cell on your grid";
     const there = player.grid[cell];
@@ -227,6 +240,19 @@ export function invest(battle: Battle, side: Side): string | null {
   player.gold -= player.investCost;
   player.income += 1;
   player.investCost += INVEST_COST_STEP;
+  return null;
+}
+
+/** Starts researching the next tier. Returns an error message or null. */
+export function research(battle: Battle, side: Side): string | null {
+  if (battle.winner !== -1) return "The match is over";
+  const player = battle.players[side];
+  if (player.tier >= MAX_TIER) return "Already at the top tier";
+  if (player.researchDone) return "Already researching";
+  const { cost, ticks } = RESEARCH[(player.tier + 1) as 2 | 3];
+  if (player.gold < cost) return "Not enough gold";
+  player.gold -= cost;
+  player.researchDone = battle.tick + ticks;
   return null;
 }
 
@@ -335,6 +361,12 @@ export function step(battle: Battle): void {
     for (const side of [0, 1] as const) {
       const player = battle.players[side];
       player.gold += player.income + (battle.shrine.owner === side ? SHRINE.income : 0);
+    }
+  }
+  for (const player of battle.players) {
+    if (player.researchDone && battle.tick >= player.researchDone) {
+      player.tier++;
+      player.researchDone = 0;
     }
   }
   if (battle.tick % WAVE_TICKS === 0) spawnWave(battle);

@@ -11,6 +11,10 @@ export const PlayerState = schema(
     gold: t.number().default(0).view(),
     income: t.number().default(0).view(),
     investCost: t.number().default(0).view(),
+    /** Highest card tier the player may play. */
+    tier: t.uint8().default(1).view(),
+    /** Tick at which research of the next tier finishes, 0 when idle. */
+    researchDone: t.number().default(0).view(),
     hand: t.array("string").view(),
     /** Card id per build cell, "" when empty. */
     grid: t.array("string").view(),
