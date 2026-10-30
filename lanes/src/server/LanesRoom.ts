@@ -1,5 +1,6 @@
 import { type ArraySchema, StateView } from "@colyseus/schema";
 import { type Client, Room } from "colyseus";
+import { STARTER_DECK, deckError } from "../shared/cards";
 import { type Battle, type Side, TICK_RATE, createBattle, invest, play, step } from "../shared/sim";
 import { LanesState, type PlayMessage, PlayerState, SpectatorState, UnitState } from "../shared/state";
 
@@ -17,11 +18,14 @@ export class LanesRoom extends Room<{ state: LanesState }> {
   maxClients = 2 + MAX_SPECTATORS;
   state = new LanesState();
   battle: Battle | null = null;
+  /** Deck per session id, kept off the synced state so nobody sees another player's deck. */
+  decks = new Map<string, string[]>();
 
   messages = {
     start: (client: Client) => {
       if (client.sessionId !== this.state.hostId || this.state.phase !== "lobby" || this.state.players.length !== 2) return;
-      this.battle = createBattle({ seed: Math.floor(Math.random() * 2147483646) + 1 });
+      const deckOf = (side: Side) => this.decks.get(this.state.players.find((p) => p.side === side)!.id) ?? STARTER_DECK;
+      this.battle = createBattle({ seed: Math.floor(Math.random() * 2147483646) + 1, decks: [deckOf(0), deckOf(1)] });
       this.state.phase = "playing";
       this.sync(this.battle);
       this.setSimulationInterval(() => this.tick(), 1000 / TICK_RATE);
@@ -29,6 +33,14 @@ export class LanesRoom extends Room<{ state: LanesState }> {
 
     play: (client: Client, message: PlayMessage) => {
       this.act(client, (battle, side) => play(battle, side, Number(message?.hand), message?.cell === undefined ? undefined : Number(message.cell)));
+    },
+
+    /** Picks the deck to play with; only before the match starts. */
+    deck: (client: Client, deck: unknown) => {
+      if (this.state.phase !== "lobby") return;
+      const error = deckError(deck);
+      if (error) client.send("error", error);
+      else this.decks.set(client.sessionId, [...(deck as string[])]);
     },
 
     invest: (client: Client) => {
@@ -71,12 +83,14 @@ export class LanesRoom extends Room<{ state: LanesState }> {
     await this.presence.srem(CODES_CHANNEL, this.roomId);
   }
 
-  onJoin(client: Client, options: { name?: unknown }) {
+  onJoin(client: Client, options: { name?: unknown; deck?: unknown }) {
     const name = normalizeName(options?.name);
     const sameName = (p: { name: string }) => p.name.toLowerCase() === name.toLowerCase();
     if (this.state.players.some(sameName) || this.state.spectators.some(sameName)) {
       throw new Error("That name is already taken in this room");
     }
+    // A bad deck falls back to the starter deck rather than refusing the join.
+    if (!deckError(options?.deck)) this.decks.set(client.sessionId, [...(options.deck as string[])]);
     client.view = new StateView();
     // Joins as a player while the lobby has a seat; otherwise (full or mid-match) as a spectator.
     if (this.state.phase === "lobby" && this.state.players.length < 2) this.addPlayer(client, name);
@@ -94,6 +108,7 @@ export class LanesRoom extends Room<{ state: LanesState }> {
   onLeave(client: Client) {
     const index = this.state.players.findIndex((p) => p.id === client.sessionId);
     const spectator = this.state.spectators.findIndex((sp) => sp.id === client.sessionId);
+    if (this.state.phase === "lobby") this.decks.delete(client.sessionId);
     if (spectator !== -1) this.state.spectators.splice(spectator, 1);
     else if (index === -1) return;
     else if (this.state.phase === "lobby") this.state.players.splice(index, 1);

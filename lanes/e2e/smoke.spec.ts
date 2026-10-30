@@ -1,5 +1,5 @@
 import { type Page, expect, test } from "@playwright/test";
-import { CARDS } from "../src/shared/cards";
+import { CARDS, STARTER_DECK } from "../src/shared/cards";
 
 type Lanes = {
   phase: string | null;
@@ -7,6 +7,7 @@ type Lanes = {
   unitCount: number;
   gold: number;
   hand: string[];
+  deck: string[];
   grid: string[];
   spellsCast: number;
   spectating: boolean;
@@ -134,4 +135,52 @@ test("two players build, a wave fights and a spell is cast", async ({ browser })
   await alice.waitForTimeout(300);
   await alice.screenshot({ path: shots("3-battle") });
   await bob.screenshot({ path: shots("4-battle-bob") });
+});
+
+test("a player builds a deck in the lobby and draws only from it", async ({ browser }) => {
+  const alice = await (await browser.newContext()).newPage();
+  const bob = await (await browser.newContext()).newPage();
+
+  await alice.goto("/");
+  await alice.fill("#name", "Alice");
+  await alice.click("#create");
+  await expect(alice.locator("#lobby-code")).toHaveText(/^[A-Z]{4}$/);
+  const code = await alice.locator("#lobby-code").innerText();
+  await bob.goto("/");
+  await bob.fill("#name", "Bob");
+  await bob.fill("#code", code);
+  await bob.click("#join");
+  await expect(alice.locator("#lobby-players li")).toHaveCount(2);
+
+  await alice.click("#lobby-deck");
+  for (const name of new Set(STARTER_DECK.map((id) => CARDS[id].name))) {
+    await alice.getByRole("button", { name: `Remove ${name}` }).click();
+  }
+  await expect(alice.locator("#deck-count")).toHaveText(/^0\/10/);
+  await expect(alice.locator("#deck-done")).toBeDisabled();
+  const picks = { Knight: 3, Golem: 3, Sniper: 3, Frost: 1 };
+  for (const [name, copies] of Object.entries(picks)) {
+    for (let i = 0; i < copies; i++) await alice.getByRole("button", { name: `Add ${name}` }).click();
+  }
+  // Three copies is the cap.
+  await expect(alice.getByRole("button", { name: "Add Knight" })).toBeDisabled();
+  await expect(alice.locator("#deck-count")).toHaveText(/^10\/10 cards · 9 units · 1 spell/);
+  await alice.screenshot({ path: shots("deck-1-builder") });
+  await alice.click("#deck-done");
+  await expect(alice.locator("#lobby")).toBeVisible();
+
+  await alice.click("#start");
+  await expect.poll(() => lanes(alice, (l) => l.phase)).toBe("playing");
+  await expect(alice.locator("#hand .hand-card strong")).toHaveCount(4);
+  const hand = await lanes(alice, (l) => l.hand);
+  for (const id of hand) expect(["knight", "golem", "sniper", "frost"]).toContain(id);
+  // Bob never touched his deck, so he plays the starter deck.
+  for (const id of await lanes(bob, (l) => l.hand)) expect(STARTER_DECK).toContain(id);
+  await alice.screenshot({ path: shots("deck-2-hand") });
+
+  // The deck is remembered in this browser.
+  await alice.goto("/");
+  expect((await lanes(alice, (l) => l.deck)).sort()).toEqual(
+    ["frost", "golem", "golem", "golem", "knight", "knight", "knight", "sniper", "sniper", "sniper"],
+  );
 });
