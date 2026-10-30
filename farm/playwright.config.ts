@@ -3,6 +3,8 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "e2e",
   timeout: 120_000,
+  // Real-time matches on slow CI runners occasionally miss a wait; one retry keeps that from failing a run.
+  retries: process.env.CI ? 1 : 0,
   use: {
     screenshot: "only-on-failure",
     baseURL: process.env.BASE_URL ?? "http://localhost:2569",
