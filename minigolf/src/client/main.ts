@@ -2,7 +2,7 @@ import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
 import type { Point } from "../shared/hole";
 import { HOLES } from "../shared/holes";
-import { MAX_AIM_DISTANCE, type ShotResult, TICK_RATE, simulateShot } from "../shared/physics";
+import { MAX_AIM_DISTANCE, type ShotResult, TICK_RATE, clockSubstep, simulateShot } from "../shared/physics";
 import { MAX_PLAYERS } from "../shared/rules";
 import { GolfState, type Phase, type PlayerState, type ShotMessage } from "../shared/state";
 import { getMusicVolume, isMuted, setMusicVolume, sfx, startMusic, toggleMute } from "./audio";
@@ -143,8 +143,9 @@ function attach(r: Room<any, GolfState>) {
   turnSeq = -1;
   saveSession(r.roomId);
 
-  r.onStateChange(() => {
-    if (anim) {
+  r.onStateChange((s) => {
+    // Patches queued before the shot (e.g. someone joining) can land after it; wait for the post-shot clock.
+    if (anim && s.courseTick === anim.msg.startTick + anim.result.ticks) {
       anim.stateArrived = true;
       if (anim.done) finishAnim();
     }
@@ -190,7 +191,7 @@ async function leave() {
 function startAnim(msg: ShotMessage) {
   waitingForShot = false;
   const hole = HOLES[msg.holeIndex];
-  const result = simulateShot(hole, msg.start, msg.shooterId, msg.aim, { record: true });
+  const result = simulateShot(hole, msg.start, msg.shooterId, msg.aim, { record: true, startTick: msg.startTick });
   anim = { msg, result, startedAt: performance.now(), nextEvent: 0, done: false, stateArrived: false };
   stats.shots++;
   renderer.clearTrails();
@@ -215,15 +216,24 @@ function finishAnim() {
 }
 
 function stepAnim(now: number) {
-  if (!anim || anim.done) return;
+  if (!anim) return;
   const tick = Math.floor(((now - anim.startedAt) / 1000) * TICK_RATE);
   const { events, frames, ticks } = anim.result;
+  if (anim.done) {
+    // Safety net: never stay stuck if the post-shot state somehow does not match.
+    if (tick > ticks + TICK_RATE * 3) finishAnim();
+    return;
+  }
   while (anim.nextEvent < events.length && events[anim.nextEvent].tick <= tick) {
     const e = events[anim.nextEvent++];
     const p = players().find((pl) => pl.id === e.id);
     if (e.type === "wall") sfx.wall(e.speed);
     else if (e.type === "ball") sfx.ball(e.speed);
-    else if (e.type === "cup") {
+    else if (e.type === "mover") sfx.mover(e.speed);
+    else if (e.type === "bumper") {
+      sfx.bumper(e.speed);
+      renderer.bumperHit(e.index);
+    } else if (e.type === "cup") {
       sfx.cup();
       renderer.burst(HOLES[anim.msg.holeIndex].cup[0], HOLES[anim.msg.holeIndex].cup[1], p?.color ?? "#ffffff");
     } else if (e.type === "splash") {
@@ -257,6 +267,15 @@ function animatedPositions(now: number): Map<string, Point | null> {
     out.set(b.id, Number.isNaN(x) ? null : [x, frame[i * 2 + 1]]);
   });
   return out;
+}
+
+/** Course-clock substep to draw moving obstacles at: follows the replay, otherwise the synced clock. */
+function courseClock(now: number): number {
+  if (anim) {
+    const tick = anim.done ? anim.result.ticks : Math.floor(((now - anim.startedAt) / 1000) * TICK_RATE);
+    return clockSubstep(anim.msg.startTick + Math.min(tick, anim.result.ticks));
+  }
+  return clockSubstep(state()?.courseTick ?? 0);
 }
 
 function shoot(aim: Point) {
@@ -482,7 +501,7 @@ async function main() {
       balls.push({ id: p.id, x: pos[0], y: pos[1], color: p.color, name: p.name, isTurn: !anim && p.id === s.turnId, isMe: p.name === myName });
     }
     const aimFrom = canShoot() && me() ? ballPosition(me()!) : null;
-    renderer.draw(dt, balls, aimFrom && mouse ? { from: aimFrom, to: mouse } : null);
+    renderer.draw(dt, balls, aimFrom && mouse ? { from: aimFrom, to: mouse } : null, courseClock(now));
   });
 
   // Rejoin after a page refresh.

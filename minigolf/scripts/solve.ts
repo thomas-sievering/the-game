@@ -62,6 +62,8 @@ function distanceField(hole: Hole): (x: number, y: number) => number {
 
 interface Node {
   pos: Point;
+  /** Course clock, so moving obstacles are where a real round would have them. */
+  tick: number;
   shots: Point[];
   score: number;
 }
@@ -77,17 +79,17 @@ function solve(hole: Hole): Point[] | null {
     }
   }
 
-  let beam: Node[] = [{ pos: hole.tee, shots: [], score: field(...hole.tee) }];
+  let beam: Node[] = [{ pos: hole.tee, tick: 0, shots: [], score: field(...hole.tee) }];
   for (let depth = 1; depth <= hole.par + 1; depth++) {
     const next: Node[] = [];
     for (const node of beam) {
       for (const aim of aims) {
-        const result = simulateShot(hole, [{ id: "p", x: node.pos[0], y: node.pos[1] }], "p", aim);
+        const result = simulateShot(hole, [{ id: "p", x: node.pos[0], y: node.pos[1] }], "p", aim, { startTick: node.tick });
         const ball = result.balls[0];
         const shots = [...node.shots, aim];
         if (ball.holed) return shots;
         if (ball.splashed) continue;
-        next.push({ pos: [ball.x, ball.y], shots, score: field(ball.x, ball.y) });
+        next.push({ pos: [ball.x, ball.y], tick: node.tick + result.ticks, shots, score: field(ball.x, ball.y) });
       }
     }
     next.sort((a, b) => a.score - b.score);
