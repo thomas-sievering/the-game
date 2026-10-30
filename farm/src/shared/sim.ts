@@ -390,6 +390,9 @@ export function build(farm: Farm, side: Side, tile: number, building: BuildingId
   if (!isBuilding(building)) return "Unknown building";
   if (t.terrain === "rock") return "Clear the rock first";
   if (t.crop || t.building) return "That tile is in use";
+  // Buildings can't be removed, so keep one plot that can grow crops; otherwise a broke farmer could be stuck for good.
+  const plots = farm.tiles.filter((o, i) => i !== tile && o.owner === side && o.terrain !== "rock" && !o.building).length;
+  if (plots === 0) return "Keep at least one plot for crops";
   const paid = pay(farm.players[side], BUILDINGS[building].cost);
   if (paid) return paid;
   t.building = building;

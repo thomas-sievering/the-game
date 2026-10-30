@@ -261,6 +261,15 @@ describe("crops", () => {
     expect(plant(farm, 0, tileAt(0, 1), "wheat")).toMatch(/need/);
   });
 
+  it("won't build on the last plot that can grow crops", () => {
+    const farm = rich(plainFarm());
+    expect(build(farm, 0, tileAt(0, 0), "well")).toBeNull();
+    expect(build(farm, 0, tileAt(1, 0), "silo")).toBeNull();
+    farm.tiles[tileAt(0, 1)].terrain = "rock";
+    expect(build(farm, 0, tileAt(1, 1), "scarecrow")).toMatch(/at least one plot/);
+    expect(plant(farm, 0, tileAt(1, 1), "wheat")).toBeNull();
+  });
+
   it("only works the owner's land", () => {
     const farm = rich(plainFarm());
     expect(plant(farm, 1, tileAt(0, 0), "wheat")).toMatch(/not your land/);
