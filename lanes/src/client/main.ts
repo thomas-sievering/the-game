@@ -3,6 +3,7 @@ import { Client, type Room } from "@colyseus/sdk";
 import { CARDS, type Card, DECK_SIZE, MAX_COPIES, type Role, STARTER_DECK, deckError } from "../shared/cards";
 import { BASE_HP, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, SHRINE, TICK_RATE, WAVE_TICKS } from "../shared/sim";
 import { LanesState, type PlayerState } from "../shared/state";
+import { isMuted, sfx, toggleMute } from "./audio";
 import { Renderer } from "./render";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -21,6 +22,8 @@ let toastTimer = 0;
 let deck = loadDeck();
 /** Deck being edited while the deck screen is open, else null. */
 let draft: string[] | null = null;
+/** What the last render saw, so sounds play only on changes. */
+let heard = { tick: -1, grid: "", income: 0, phase: "" };
 
 function show(screen: "home" | "deck" | "lobby" | "game") {
   $("home").classList.toggle("hidden", screen !== "home");
@@ -174,6 +177,7 @@ function render() {
     $<HTMLButtonElement>("invest").disabled = self.gold < self.investCost;
     renderHand(self, s.tick);
   }
+  playStateSounds(s, self);
   renderer.setGrid([...(self?.grid ?? [])]);
   renderer.setShrine(s.shrineOwner, s.shrineControl);
   renderer.setUnits([...s.units.values()]);
@@ -184,6 +188,49 @@ function render() {
     $("result").innerHTML = `<h1>${escapeHtml(text)}</h1><button id="home-again" class="primary">Back to start</button>`;
     $("home-again").onclick = () => void room?.leave();
     select(-1);
+  }
+}
+
+/** Sounds for state changes that have no fx event: waves, placements, investing and the result. */
+function playStateSounds(s: LanesState, self: PlayerState | undefined) {
+  const grid = (self?.grid ?? []).join(",");
+  const income = self?.income ?? 0;
+  // The first render of a match (or after rejoining) only records the state.
+  if (heard.tick !== -1 && s.tick >= heard.tick) {
+    if (s.phase === "playing" && s.tick > heard.tick) {
+      if (Math.floor(s.tick / WAVE_TICKS) > Math.floor(heard.tick / WAVE_TICKS)) sfx.wave();
+      else {
+        const secondsLeft = (t: number) => Math.ceil((WAVE_TICKS - (t % WAVE_TICKS)) / TICK_RATE);
+        const left = secondsLeft(s.tick);
+        if (left <= 3 && left < secondsLeft(heard.tick)) sfx.tick();
+      }
+    }
+    if (s.phase === "playing" && heard.phase === "playing") {
+      if (grid !== heard.grid) sfx.place();
+      if (income > heard.income) sfx.invest();
+    }
+    if (s.phase === "finished" && heard.phase !== "finished") {
+      if (s.winner === self?.side) sfx.win();
+      else if (self && s.winner !== DRAW) sfx.lose();
+      else sfx.wave();
+    }
+  }
+  heard = { tick: s.tick, grid, income, phase: s.phase };
+}
+
+function playFxSounds(events: Fx[]) {
+  const mySide = me()?.side ?? -1;
+  for (const fx of events) {
+    if (fx.type === "hit") {
+      if (fx.id === 0) sfx.turret();
+      else if (fx.splash > 0) sfx.splash();
+      else if (fx.ranged) sfx.shot();
+      else sfx.melee();
+    } else if (fx.type === "heal") sfx.heal();
+    else if (fx.type === "death") sfx.death(fx.side === mySide);
+    else if (fx.type === "breach") sfx.breach(1 - fx.side === mySide);
+    else if (fx.type === "spell") sfx.spell(fx.card);
+    else if (fx.type === "shrine" && fx.owner !== -1) sfx.shrine(mySide === -1 || fx.owner === mySide);
   }
 }
 
@@ -256,6 +303,7 @@ function useSlot(slot: number) {
     room.send("play", { hand: slot });
   } else {
     select(selected === slot ? -1 : slot);
+    sfx.click();
   }
 }
 
@@ -286,10 +334,17 @@ async function enter(join: () => Promise<Room<any, LanesState>>) {
     return;
   }
   room.onStateChange(render);
-  room.onMessage("fx", (events: Fx[]) => renderer.addFx(events));
-  room.onMessage("error", (message: string) => toast(message));
+  room.onMessage("fx", (events: Fx[]) => {
+    renderer.addFx(events);
+    playFxSounds(events);
+  });
+  room.onMessage("error", (message: string) => {
+    toast(message);
+    sfx.error();
+  });
   room.onLeave(() => {
     room = null;
+    heard = { tick: -1, grid: "", income: 0, phase: "" };
     select(-1);
     render();
   });
@@ -310,6 +365,8 @@ function main() {
     $("hand").appendChild(button);
   }
   $("invest").onclick = () => room?.send("invest");
+  $("mute").textContent = isMuted() ? "🔇" : "🔊";
+  $("mute").onclick = () => ($("mute").textContent = toggleMute() ? "🔇" : "🔊");
   window.addEventListener("keydown", (e) => {
     if (draft && e.key === "Escape") return closeDeck(false);
     if (room?.state.phase !== "playing" || e.target instanceof HTMLInputElement) return;
