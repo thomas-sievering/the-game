@@ -50,6 +50,8 @@ export interface Unit {
   /** 1 to MAX_LEVEL; scales health, damage and bounty. */
   level: number;
   breached?: boolean;
+  /** Killed by a spell that pays no bounty. */
+  noBounty?: boolean;
 }
 
 export interface Player {
@@ -68,6 +70,8 @@ export interface Player {
   levels: number[];
   /** Tick at which each spell can be cast again. */
   ready: Record<string, number>;
+  /** Times each limited-use spell has been cast. */
+  used: Record<string, number>;
   turretCooldown: number;
 }
 
@@ -136,6 +140,7 @@ function createPlayer(): Player {
     grid: new Array<string>(ROWS * COLS).fill(""),
     levels: new Array<number>(ROWS * COLS).fill(0),
     ready: {},
+    used: {},
     turretCooldown: 0,
   };
 }
@@ -153,12 +158,24 @@ function shuffle(battle: Battle, cards: string[]): string[] {
   return cards;
 }
 
+/** Draws the next card, dropping limited-use spells that have no uses left. */
 function draw(battle: Battle, player: Player): string {
-  if (player.deck.length === 0) {
-    player.deck = shuffle(battle, player.discard);
-    player.discard = [];
+  for (;;) {
+    if (player.deck.length === 0) {
+      if (player.discard.length === 0) return "";
+      player.deck = shuffle(battle, player.discard);
+      player.discard = [];
+    }
+    const card = player.deck.pop()!;
+    if (usesLeft(player, card) !== 0) return card;
   }
-  return player.deck.pop() ?? "";
+}
+
+/** Casts a player has left of a limited-use spell, or -1 for any other card. */
+export function usesLeft(player: Pick<Player, "used">, cardId: string): number {
+  const card = CARDS[cardId];
+  if (card?.kind !== "spell" || card.uses === undefined) return -1;
+  return Math.max(0, card.uses - (player.used[cardId] ?? 0));
 }
 
 export function rowCenter(row: number): number {
@@ -191,6 +208,8 @@ export function play(battle: Battle, side: Side, handIndex: number, cell?: numbe
     const there = player.grid[cell];
     if (there && there !== card.id) return "That pad is taken; sell it first";
     if (there && player.levels[cell] >= MAX_LEVEL) return `${card.name} is already max level`;
+  } else if (usesLeft(player, card.id) === 0) {
+    return `No ${card.name} casts left`;
   } else if ((player.ready[card.id] ?? 0) > battle.tick) {
     return `${card.name} is on cooldown`;
   }
@@ -202,9 +221,15 @@ export function play(battle: Battle, side: Side, handIndex: number, cell?: numbe
     player.levels[cell!] += 1;
   } else {
     cast(battle, side, card);
+    if (card.uses !== undefined) player.used[card.id] = (player.used[card.id] ?? 0) + 1;
   }
-  player.discard.push(card.id);
-  player.hand[handIndex] = draw(battle, player);
+  if (usesLeft(player, card.id) === 0) {
+    // Used up: it leaves the deck, and other copies in hand are swapped for fresh cards.
+    for (let i = 0; i < player.hand.length; i++) if (player.hand[i] === card.id) player.hand[i] = draw(battle, player);
+  } else {
+    player.discard.push(card.id);
+    player.hand[handIndex] = draw(battle, player);
+  }
   return null;
 }
 
@@ -273,6 +298,27 @@ function cast(battle: Battle, side: Side, card: SpellCard): void {
     return;
   } else if (effect.type === "summon") {
     for (let row = 0; row < ROWS; row++) hit.push(spawnUnit(battle, side, effect.card, row, COLS - 1));
+  } else if (effect.type === "repair") {
+    const player = battle.players[side];
+    player.baseHp = Math.min(BASE_HP, player.baseHp + effect.amount);
+    battle.events.push({ type: "spell", side, card: card.id, points: [[side === 0 ? 0 : FIELD_WIDTH, FIELD_HEIGHT / 2]] });
+    return;
+  } else if (effect.type === "smite") {
+    let target: Unit | null = null;
+    for (const u of theirs) if (!target || u.hp > target.hp || (u.hp === target.hp && advance(u) > advance(target))) target = u;
+    if (target) {
+      target.hp -= effect.damage;
+      hit = [target];
+    }
+  } else if (effect.type === "quake") {
+    hit = theirs;
+    for (const u of hit) u.hp -= effect.damage;
+  } else if (effect.type === "wipe") {
+    hit = battle.units.filter((u) => u.hp > 0);
+    for (const u of hit) {
+      u.hp = 0;
+      u.noBounty = true;
+    }
   } else {
     hit = theirs.sort((a, b) => advance(b) - advance(a) || a.id - b.id).slice(0, effect.targets);
     for (const u of hit) u.hp -= effect.damage;
@@ -351,7 +397,7 @@ export function step(battle: Battle): void {
       continue;
     }
     if (unit.breached) continue;
-    battle.players[unit.side === 0 ? 1 : 0].gold += scaled(unitCard(unit.card).bounty, unit.level);
+    if (!unit.noBounty) battle.players[unit.side === 0 ? 1 : 0].gold += scaled(unitCard(unit.card).bounty, unit.level);
     battle.events.push({ type: "death", id: unit.id, side: unit.side, x: unit.x, y: unit.y });
   }
   battle.units = alive;

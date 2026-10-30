@@ -18,6 +18,8 @@ export const PlayerState = schema(
     levels: t.array("uint8").view(),
     /** Tick at which each spell can be cast again. */
     ready: t.map("number").view(),
+    /** Times each limited-use spell has been cast. */
+    used: t.map("number").view(),
   },
   "PlayerState",
 );

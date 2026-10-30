@@ -14,6 +14,7 @@ export const TABLE = {
   cloth: 0xf3ead8,
   bomb: 0x2b2b30,
   spark: 0xffd166,
+  fur: 0x8d8478,
 };
 
 /** Scales each colour channel; below 1 darkens, above 1 moves toward white. */
@@ -108,6 +109,42 @@ export function drawMini(g: Graphics, cardId: string, r: number, style: MiniStyl
       g.poly([0 * u, -1.86 * u, -0.25 * u, -2.15 * u, -0.7 * u, -1.95 * u, -0.3 * u, -1.8 * u]).fill(fill(paint)).stroke(ink);
       outlinedLine(0.5, -0.45, 1.05, -1.55, TABLE.steel, 0.12);
       line(0.36, -0.68, 0.72, -0.5, TABLE.woodDark, 0.1);
+      break;
+    }
+    case "berserker": {
+      // Bare-chested with a war-paint sash and a horned helm, axe raised overhead.
+      body(1.25, 1.0, TABLE.skin);
+      line(-0.45, -0.1, 0.4, -0.85, paint, 0.2);
+      g.rect(-0.62 * u, -0.28 * u, 1.24 * u, 0.2 * u).fill(fill(dark)).stroke(ink);
+      head(0, -1.38, 0.36);
+      g.ellipse(0, -1.52 * u, 0.4 * u, 0.2 * u).fill(fill(TABLE.steel)).stroke(ink);
+      for (const side of [-1, 1]) {
+        g.poly([side * 0.32 * u, -1.6 * u, side * 0.62 * u, -1.95 * u, side * 0.5 * u, -1.55 * u]).fill(fill(TABLE.cloth)).stroke(ink);
+      }
+      const swing = Math.sin(time * 10) * 0.08;
+      outlinedLine(0.35, -0.6, 0.7 + swing, -2.0, TABLE.woodDark, 0.11);
+      g.poly([(0.6 + swing) * u, -1.85 * u, (1.15 + swing) * u, -2.15 * u, (1.1 + swing) * u, -1.6 * u, (0.68 + swing) * u, -1.68 * u])
+        .fill(fill(TABLE.steel)).stroke(ink);
+      break;
+    }
+    case "wolfrider": {
+      // A grey wolf in a loping stride with a small rider holding a lance.
+      const lope = Math.sin(time * 16) * 0.06;
+      for (const lx of [-0.6, 0.55]) line(lx, -0.3, lx + lope * 2, 0, shade(TABLE.fur, 0.7), 0.16);
+      for (const [color, width] of [[TABLE.ink, 0.2 * u + ink.width * 2], [TABLE.fur, 0.2 * u]]) {
+        g.moveTo(-0.85 * u, -0.6 * u).quadraticCurveTo(-1.35 * u, (-0.75 + lope) * u, -1.25 * u, -1.05 * u).stroke({ color, width, alpha, cap: "round" });
+      }
+      g.ellipse(-0.1 * u, (-0.55 + lope) * u, 0.85 * u, 0.36 * u).fill(fill(TABLE.fur)).stroke(ink);
+      g.poly([0.6 * u, -0.75 * u, 1.25 * u, -0.62 * u, 1.3 * u, -0.48 * u, 0.7 * u, -0.38 * u]).fill(fill(TABLE.fur)).stroke(ink);
+      g.poly([0.7 * u, -0.72 * u, 0.78 * u, -1.0 * u, 0.9 * u, -0.7 * u]).fill(fill(shade(TABLE.fur, 0.7))).stroke(ink);
+      g.circle(1.0 * u, -0.62 * u, 0.05 * u).fill(fill(TABLE.ink));
+      g.ellipse(-0.1 * u, (-0.82 + lope) * u, 0.42 * u, 0.12 * u).fill(fill(paint)).stroke(ink);
+      g.poly([-0.35 * u, (-0.85 + lope) * u, 0.15 * u, (-0.85 + lope) * u, 0.05 * u, (-1.45 + lope) * u, -0.25 * u, (-1.45 + lope) * u])
+        .fill(fill(paint)).stroke(ink);
+      head(-0.1, -1.66 + lope, 0.24);
+      g.ellipse(-0.1 * u, (-1.76 + lope) * u, 0.26 * u, 0.13 * u).fill(fill(TABLE.steel)).stroke(ink);
+      outlinedLine(-0.4, -0.9 + lope, 1.3, -1.6 + lope, TABLE.wood, 0.07);
+      g.poly([1.25 * u, (-1.66 + lope) * u, 1.55 * u, (-1.72 + lope) * u, 1.32 * u, (-1.5 + lope) * u]).fill(fill(TABLE.steel)).stroke(ink);
       break;
     }
     case "archer": {
@@ -218,7 +255,7 @@ export function drawMini(g: Graphics, cardId: string, r: number, style: MiniStyl
 
 /** How tall a miniature stands above its base centre, for health bars and floaters. */
 export function miniHeight(cardId: string, r: number): number {
-  const tall: Record<string, number> = { swarm: 1.2, catapult: 1.7, golem: 1.9, spearman: 2.5, knight: 2.2 };
+  const tall: Record<string, number> = { swarm: 1.2, catapult: 1.7, golem: 1.9, spearman: 2.5, knight: 2.2, berserker: 2.2, wolfrider: 2.0 };
   return (tall[cardId] ?? 1.8) * r;
 }
 
@@ -277,6 +314,34 @@ export function drawSpellIcon(g: Graphics, cardId: string, s: number): void {
       g.moveTo(-0.5 * s, 0.95 * s).lineTo(-0.5 * s, -0.95 * s).stroke({ color: TABLE.ink, width: 0.2 * s, cap: "round" })
         .moveTo(-0.5 * s, 0.95 * s).lineTo(-0.5 * s, -0.95 * s).stroke({ color: TABLE.woodLight, width: 0.1 * s, cap: "round" });
       g.poly([-0.45 * s, -0.9 * s, 0.85 * s, -0.6 * s, 0.4 * s, -0.3 * s, 0.85 * s, 0, -0.45 * s, -0.1 * s]).fill(0x4f8fe0).stroke(ink);
+      break;
+    case "repair":
+      // A hammer over a stone block.
+      g.roundRect(-0.8 * s, 0.2 * s, 1.6 * s, 0.65 * s, 0.1 * s).fill(TABLE.stone).stroke(ink);
+      g.moveTo(-0.8 * s, 0.52 * s).lineTo(0.8 * s, 0.52 * s).moveTo(0, 0.2 * s).lineTo(0, 0.52 * s).stroke({ color: TABLE.stoneDark, width: 0.06 * s });
+      g.moveTo(-0.55 * s, 0.05 * s).lineTo(0.4 * s, -0.7 * s).stroke({ color: TABLE.ink, width: 0.26 * s, cap: "round" })
+        .moveTo(-0.55 * s, 0.05 * s).lineTo(0.4 * s, -0.7 * s).stroke({ color: TABLE.woodLight, width: 0.14 * s, cap: "round" });
+      g.poly([0.1 * s, -0.95 * s, 0.4 * s, -1.0 * s, 0.85 * s, -0.45 * s, 0.6 * s, -0.3 * s]).fill(TABLE.steel).stroke(ink);
+      break;
+    case "smite":
+      // A sword striking down.
+      g.poly([-0.12 * s, -0.95 * s, 0.12 * s, -0.95 * s, 0.12 * s, 0.4 * s, 0, 0.7 * s, -0.12 * s, 0.4 * s]).fill(TABLE.steel).stroke(ink);
+      g.roundRect(-0.5 * s, -0.55 * s, 1.0 * s, 0.18 * s, 0.06 * s).fill(0xffd166).stroke(ink);
+      for (const dx of [-0.6, 0.6]) g.moveTo(dx * 0.6 * s, 0.75 * s).lineTo(dx * s, 0.95 * s).stroke({ color: 0xfff3a0, width: 0.14 * s, cap: "round" });
+      break;
+    case "quake":
+      // Ground split by a jagged crack.
+      g.roundRect(-0.9 * s, -0.25 * s, 1.8 * s, 0.9 * s, 0.15 * s).fill(0x8a6a44).stroke(ink);
+      g.poly([-0.15 * s, -0.25 * s, 0.15 * s, 0.05 * s, -0.1 * s, 0.25 * s, 0.2 * s, 0.65 * s, 0, 0.65 * s, -0.3 * s, 0.25 * s, -0.05 * s, 0.05 * s, -0.3 * s, -0.25 * s])
+        .fill(TABLE.ink);
+      for (const dx of [-0.65, 0.65]) g.moveTo(dx * s, -0.5 * s).lineTo(dx * 1.2 * s, -0.85 * s).stroke({ color: TABLE.ink, width: 0.14 * s, cap: "round" });
+      break;
+    case "cataclysm":
+      // A skull on a burning sun.
+      g.star(0, 0, 10, 0.98 * s, 0.7 * s).fill(0xff5a3c).stroke(ink);
+      g.circle(0, -0.1 * s, 0.5 * s).fill(TABLE.cloth).stroke(ink);
+      g.roundRect(-0.28 * s, 0.25 * s, 0.56 * s, 0.32 * s, 0.08 * s).fill(TABLE.cloth).stroke(ink);
+      for (const dx of [-0.2, 0.2]) g.circle(dx * s, -0.12 * s, 0.13 * s).fill(TABLE.ink);
       break;
     default:
       g.star(0, 0, 5, 0.8 * s, 0.4 * s).fill(0xffd166).stroke(ink);

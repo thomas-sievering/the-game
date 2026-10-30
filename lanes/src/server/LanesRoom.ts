@@ -160,6 +160,7 @@ export class LanesRoom extends Room<{ state: LanesState }> {
       syncArray(view.grid, player.grid);
       syncArray(view.levels, player.levels);
       for (const [card, tick] of Object.entries(player.ready)) if (view.ready.get(card) !== tick) view.ready.set(card, tick);
+      for (const [card, count] of Object.entries(player.used)) if (view.used.get(card) !== count) view.used.set(card, count);
     }
     if (battle.events.length) this.broadcast("fx", battle.events.splice(0));
     const alive = new Set<string>();

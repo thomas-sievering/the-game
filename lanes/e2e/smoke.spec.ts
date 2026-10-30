@@ -254,3 +254,52 @@ test("playing a unit onto the same unit levels it up and the field shows its ran
   await alice.waitForTimeout(2500);
   await alice.screenshot({ path: shots("levels-2-field") });
 });
+
+test("new units take the field and cataclysm clears it", async ({ browser }) => {
+  const context = await newContext(browser);
+  const deck = ["berserker", "berserker", "wolfrider", "wolfrider", "cataclysm", "cataclysm", "cataclysm", "smite", "quake", "repair"];
+  await context.addInitScript((d) => localStorage.setItem("lanes.deck", d), JSON.stringify(deck));
+  const alice = await context.newPage();
+  const bob = await (await newContext(browser)).newPage();
+
+  await alice.goto("/");
+  await alice.fill("#name", "Alice");
+  await alice.click("#create");
+  await expect(alice.locator("#lobby-code")).toHaveText(/^[A-Z]{4}$/);
+  const code = await alice.locator("#lobby-code").innerText();
+  await bob.goto("/");
+  await bob.fill("#name", "Bob");
+  await bob.fill("#code", code);
+  await bob.click("#join");
+  await expect(alice.locator("#lobby-players li")).toHaveCount(2);
+  await alice.click("#start");
+  await expect.poll(() => lanes(alice, (l) => l.phase)).toBe("playing");
+
+  // Put both new units on the grid; the shuffle decides which comes first.
+  for (let i = 0; i < 60; i++) {
+    const grid = await lanes(alice, (l) => l.grid);
+    if (grid.includes("berserker") && grid.includes("wolfrider")) break;
+    if (!(await placeUnit(alice, grid.indexOf("") === -1 ? 0 : [4, 5, 6, 7, 0, 1, 2, 3].find((c) => !grid[c])!))) await alice.waitForTimeout(1000);
+  }
+  await expect.poll(() => lanes(alice, (l) => l.unitCount), { timeout: 30_000 }).toBeGreaterThan(0);
+  await alice.waitForTimeout(2500);
+  await alice.screenshot({ path: shots("new-1-field") });
+
+  // Cycle the hand by casting cheaper spells until Cataclysm shows up and is affordable.
+  for (let i = 0; i < 60; i++) {
+    const { hand, gold } = await lanes(alice, (l) => ({ hand: l.hand, gold: l.gold }));
+    if (hand.includes("cataclysm") && gold >= CARDS.cataclysm.cost) break;
+    const slot = hand.findIndex((id) => id !== "cataclysm" && CARDS[id]?.cost <= gold);
+    if (slot !== -1 && CARDS[hand[slot]].kind === "spell") await alice.locator(".hand-card").nth(slot).click();
+    else if (slot !== -1) await placeUnit(alice, (await lanes(alice, (l) => l.grid)).indexOf(hand[slot]));
+    await alice.waitForTimeout(1000);
+  }
+  await expect.poll(() => lanes(alice, (l) => l.unitCount), { timeout: 30_000 }).toBeGreaterThan(0);
+  await expect(alice.locator(".hand-card", { hasText: "Cataclysm" }).first()).toContainText("3/3 left");
+  await expect.poll(() => lanes(alice, (l) => l.gold), { timeout: 30_000 }).toBeGreaterThanOrEqual(CARDS.cataclysm.cost);
+  await alice.screenshot({ path: shots("new-2-before-cataclysm") });
+  await alice.locator(".hand-card", { hasText: "Cataclysm" }).first().click();
+  await expect.poll(() => lanes(alice, (l) => l.unitCount), { timeout: 2000, intervals: [50] }).toBe(0);
+  await alice.waitForTimeout(300);
+  await alice.screenshot({ path: shots("new-3-after-cataclysm") });
+});

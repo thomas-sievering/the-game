@@ -208,26 +208,27 @@ function renderHand(self: PlayerState, tick: number) {
     const button = buttons[i] as HTMLButtonElement;
     const card = CARDS[self.hand[i] ?? ""];
     const cooldown = card?.kind === "spell" ? Math.max(0, (self.ready.get(card.id) ?? 0) - tick) : 0;
-    const key = `${card?.id}|${Math.ceil(cooldown / TICK_RATE)}`;
+    const left = card?.kind === "spell" && card.uses !== undefined ? card.uses - (self.used.get(card.id) ?? 0) : undefined;
+    const key = `${card?.id}|${Math.ceil(cooldown / TICK_RATE)}|${left}`;
     if (button.dataset.key !== key) {
       button.dataset.key = key;
       button.className = `hand-card ${card?.kind ?? "empty"}`;
-      button.innerHTML = card ? cardHtml(card, i, cooldown) : "";
+      button.innerHTML = card ? cardHtml(card, i, cooldown, left) : "";
     }
     button.classList.toggle("poor", !card || self.gold < card.cost || cooldown > 0);
     button.classList.toggle("selected", i === selected);
   }
 }
 
-/** `slot` is the hand slot whose shortcut key to show, or null outside the hand. */
-function cardHtml(card: Card, slot: number | null, cooldown: number): string {
+/** `slot` is the hand slot whose shortcut key to show, or null outside the hand; `left` is the casts left of a limited spell. */
+function cardHtml(card: Card, slot: number | null, cooldown: number, left?: number): string {
   const top =
     `<span class="cost">${card.cost}</span>${slot === null ? "" : `<span class="key">${slot + 1}</span>`}` +
     `<span class="art"><span class="mini" style="background-image: url('${renderer.cardArt(card.id)}')"></span></span>`;
   if (card.kind === "spell") {
     return (
       `${top}<strong>${card.name}</strong>` +
-      `<span class="text">${card.text}</span><span class="stats">Spell · ${card.cooldownTicks / TICK_RATE} s cooldown</span>` +
+      `<span class="text">${card.text}</span><span class="stats">Spell · ${card.cooldownTicks / TICK_RATE} s cooldown${uses(card, left)}</span>` +
       (cooldown ? `<span class="cooldown">${Math.ceil(cooldown / TICK_RATE)}</span>` : "")
     );
   }
@@ -240,6 +241,11 @@ function cardHtml(card: Card, slot: number | null, cooldown: number): string {
     `<span title="${healer ? "Healing" : "Damage"}">${healer ? "✚" : "⚔"} ${card.damage}</span>` +
     `<span title="Range">◎ ${card.range}</span></span>`
   );
+}
+
+function uses(card: Card, left?: number): string {
+  if (card.kind !== "spell" || card.uses === undefined) return "";
+  return left === undefined ? ` · ${card.uses}× per match` : ` · ${left}/${card.uses} left`;
 }
 
 function select(slot: number) {

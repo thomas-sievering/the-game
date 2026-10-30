@@ -129,6 +129,19 @@ export const sfx = {
       tone(1400, 0.35, 0.06, "sine", 0, 200);
       noise(0.6, 0.9, 260, 0.5, "lowpass", 0.3);
       tone(80, 0.5, 0.35, "sine", 0.3, 35);
+    } else if (card === "repair") {
+      [0, 0.12, 0.24].forEach((at) => noise(0.08, 0.35, 1800, 1.5, "bandpass", at));
+      tone(523, 0.3, 0.08, "triangle", 0.3, 784);
+    } else if (card === "smite") {
+      tone(1800, 0.15, 0.1, "sawtooth", 0, 300);
+      noise(0.3, 0.5, 1200, 0.8, "bandpass", 0.05);
+    } else if (card === "quake") {
+      noise(0.8, 0.8, 140, 0.7, "lowpass");
+      tone(55, 0.8, 0.3, "sine", 0, 40);
+    } else if (card === "cataclysm") {
+      tone(70, 1.4, 0.35, "sawtooth", 0, 30);
+      noise(1.4, 1, 400, 0.5, "lowpass", 0.1);
+      tone(1400, 0.6, 0.08, "sine", 0, 100);
     } else if (card === "fury") {
       tone(110, 0.4, 0.14, "sawtooth", 0, 220);
       tone(165, 0.4, 0.1, "sawtooth", 0.05, 330);
