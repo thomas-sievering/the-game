@@ -1,4 +1,4 @@
-import { type Page, expect, test } from "@playwright/test";
+import { type Browser, type Page, expect, test } from "@playwright/test";
 import { CARDS, STARTER_DECK } from "../src/shared/cards";
 
 type Lanes = {
@@ -9,6 +9,7 @@ type Lanes = {
   hand: string[];
   deck: string[];
   grid: string[];
+  levels: number[];
   spellsCast: number;
   spectating: boolean;
   visibleGrids: number[];
@@ -18,6 +19,13 @@ type Lanes = {
 const shots = (name: string) => `${process.env.SCREENSHOT_DIR ?? "artifacts/e2e"}/${name}.png`;
 const lanes = <T>(page: Page, fn: (l: Lanes, arg: any) => T, arg?: unknown) =>
   page.evaluate(`(${fn.toString()})(window.__lanes, ${JSON.stringify(arg ?? null)})`) as Promise<T>;
+
+/** A browser context that starts muted: CI runners have no audio device, and a live AudioContext there can stall the page. */
+async function newContext(browser: Browser) {
+  const context = await browser.newContext();
+  await context.addInitScript(() => localStorage.setItem("lanes.muted", "1"));
+  return context;
+}
 
 /** Places the first affordable unit card in the hand on a cell via keyboard + click. */
 async function placeUnit(page: Page, cell: number): Promise<boolean> {
@@ -42,7 +50,7 @@ async function castSpell(page: Page): Promise<boolean> {
 }
 
 test("the host spectates and a latecomer watches mid-match", async ({ browser }) => {
-  const pages = await Promise.all([0, 1, 2, 3].map(async () => (await browser.newContext()).newPage()));
+  const pages = await Promise.all([0, 1, 2, 3].map(async () => (await newContext(browser)).newPage()));
   const [alice, bob, carol, dave] = pages;
 
   await alice.goto("/");
@@ -90,8 +98,8 @@ test("the host spectates and a latecomer watches mid-match", async ({ browser })
 });
 
 test("two players build, a wave fights and a spell is cast", async ({ browser }) => {
-  const alice = await (await browser.newContext()).newPage();
-  const bob = await (await browser.newContext()).newPage();
+  const alice = await (await newContext(browser)).newPage();
+  const bob = await (await newContext(browser)).newPage();
 
   await alice.goto("/");
   await alice.fill("#name", "Alice");
@@ -149,8 +157,8 @@ test("two players build, a wave fights and a spell is cast", async ({ browser })
 });
 
 test("a player builds a deck in the lobby and draws only from it", async ({ browser }) => {
-  const alice = await (await browser.newContext()).newPage();
-  const bob = await (await browser.newContext()).newPage();
+  const alice = await (await newContext(browser)).newPage();
+  const bob = await (await newContext(browser)).newPage();
 
   await alice.goto("/");
   await alice.fill("#name", "Alice");
@@ -190,4 +198,58 @@ test("a player builds a deck in the lobby and draws only from it", async ({ brow
   // The deck is remembered in this browser.
   await alice.goto("/");
   expect((await lanes(alice, (l) => l.deck)).sort()).toEqual(deck);
+});
+
+test("playing a unit onto the same unit levels it up and the field shows its rank", async ({ browser }) => {
+  const context = await newContext(browser);
+  // Only cheap units, so levels come quickly.
+  const deck = ["footman", "footman", "footman", "runner", "runner", "runner", "archer", "archer", "archer", "meteor"];
+  await context.addInitScript((d) => localStorage.setItem("lanes.deck", d), JSON.stringify(deck));
+  const alice = await context.newPage();
+  const bob = await (await newContext(browser)).newPage();
+
+  await alice.goto("/");
+  await alice.fill("#name", "Alice");
+  await alice.click("#create");
+  await expect(alice.locator("#lobby-code")).toHaveText(/^[A-Z]{4}$/);
+  const code = await alice.locator("#lobby-code").innerText();
+  await bob.goto("/");
+  await bob.fill("#name", "Bob");
+  await bob.fill("#code", code);
+  await bob.click("#join");
+  await expect(alice.locator("#lobby-players li")).toHaveCount(2);
+  await alice.click("#start");
+  await expect.poll(() => lanes(alice, (l) => l.phase)).toBe("playing");
+
+  // Stack each unit onto its own cell until one cell is level 3 and another level 2.
+  const done = (levels: number[]) => levels.includes(3) && levels.filter((l) => l >= 2).length >= 2;
+  for (let i = 0; i < 60; i++) {
+    const { hand, gold, grid, levels } = await lanes(alice, (l) => ({ hand: l.hand, gold: l.gold, grid: l.grid, levels: l.levels }));
+    if (done(levels)) break;
+    const slot = hand.findIndex((id) => CARDS[id]?.kind === "unit" && CARDS[id].cost <= gold);
+    if (slot === -1) {
+      await alice.waitForTimeout(1000);
+      continue;
+    }
+    const id = hand[slot];
+    const own = grid.findIndex((c, cell) => c === id && levels[cell] < 3);
+    const cell = own !== -1 ? own : [4, 5, 6].find((c) => !grid[c]) ?? 4;
+    await alice.keyboard.press(String(slot + 1));
+    const point = await lanes(alice, (l, c) => l.cellOnScreen(c), cell);
+    if (own !== -1) {
+      await alice.mouse.move(point.x, point.y);
+      await alice.screenshot({ path: shots("levels-0-hover-upgrade") });
+    }
+    await alice.mouse.click(point.x, point.y);
+    await expect.poll(() => lanes(alice, (l, c) => [l.grid[c], l.levels[c]], cell)).toEqual([id, own !== -1 ? levels[cell] + 1 : 1]);
+  }
+  expect(done(await lanes(alice, (l) => l.levels))).toBe(true);
+  await alice.mouse.move(5, 5);
+  await alice.screenshot({ path: shots("levels-1-grid") });
+
+  // Wait for a wave with the levelled units on the field.
+  const wave = await lanes(alice, (l) => l.unitCount);
+  await expect.poll(() => lanes(alice, (l) => l.unitCount), { timeout: 30_000 }).toBeGreaterThan(wave);
+  await alice.waitForTimeout(2500);
+  await alice.screenshot({ path: shots("levels-2-field") });
 });

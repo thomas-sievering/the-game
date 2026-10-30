@@ -14,6 +14,9 @@ export const PALETTE = {
   carrot: 0xf08a24,
   pumpkin: 0xe8711c,
   berries: 0x9b55c8,
+  // Hover preview tints for what a well waters and where weeds would land.
+  pond: 0x5fa8d3,
+  weeds: 0x2f5d1e,
 };
 
 /** What the renderer needs from a synced tile. */
@@ -344,6 +347,8 @@ export class Renderer {
   canAct: (tile: number) => boolean = () => false;
   onTile: (tile: number) => void = () => {};
   onHover: (tile: number) => void = () => {};
+  /** Tiles to tint while hovering, e.g. what a well would water or a scarecrow would guard. */
+  preview: { tiles: number[]; color: number } | null = null;
 
   async init(parent: HTMLElement): Promise<void> {
     await this.app.init({
@@ -729,6 +734,17 @@ export class Renderer {
       g.rect(bx, by, 1, 1).fill(PALETTE.ink);
     }
 
+    // Tint what the hovered action would affect, e.g. what a well waters or a scarecrow guards.
+    if (this.preview) {
+      for (const tile of this.preview.tiles) {
+        const { x, y } = this.viewXY(tile);
+        const px = FRAME + x * TILE;
+        const py = FRAME + y * TILE;
+        g.rect(px + 1, py + 1, TILE - 2, TILE - 2).fill({ color: this.preview.color, alpha: 0.28 });
+        drawBrackets(g, px + 1, py + 1, TILE - 2, this.preview.color, 0.8);
+      }
+    }
+
     if (this.hover !== -1) {
       const { x, y } = this.viewXY(this.hover);
       const px = FRAME + x * TILE;
@@ -862,5 +878,10 @@ function drawSoil(g: Graphics, px: number, py: number, h: number, shades: number
     g.rect(px + 4 + ((v >>> 6) % 8), py + 9, 2, 1).fill({ color: 0x9fd3f0, alpha: 0.35 });
   } else {
     g.rect(px + 3 + (v % 10), py + 6 + ((v >>> 6) % 2) * 4, 1, 1).fill(INK.T);
+    // Cracks mark dry soil, where crops grow at half speed.
+    const crack = shadow;
+    g.rect(px + 3, py + 4, 1, 1).fill(crack).rect(px + 4, py + 5, 1, 1).fill(crack).rect(px + 5, py + 5, 2, 1).fill(crack);
+    g.rect(px + 4, py + 6, 1, 1).fill(crack);
+    g.rect(px + 12, py + 10, 1, 1).fill(crack).rect(px + 11, py + 11, 1, 1).fill(crack).rect(px + 9, py + 12, 2, 1).fill(crack);
   }
 }

@@ -254,6 +254,10 @@ button.primary {
   border-bottom: 1px solid var(--panel-2);
 }
 
+.market-row .info {
+  display: contents;
+}
+
 .market-row .icon {
   font-size: 18px;
 }
@@ -463,4 +467,64 @@ button.primary {
   height: 40px;
   padding: 0;
   font-size: 18px;
+}
+
+#barn-size.full {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.tip {
+  position: fixed;
+  z-index: 10;
+  max-width: 280px;
+  padding: 10px 12px;
+  background: #fffaf0;
+  border: 1px solid #c9b48a;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.tip b:first-child {
+  display: inline-block;
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+.tip-key {
+  float: right;
+  margin-left: 8px;
+  padding: 0 5px;
+  border: 1px solid #c9b48a;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tip-row {
+  margin-top: 3px;
+}
+
+.tip-muted {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tip-warn {
+  margin-top: 3px;
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.tip-action {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--panel-2);
+  color: var(--leaf);
+  font-weight: 600;
 }
