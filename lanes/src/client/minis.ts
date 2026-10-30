@@ -42,23 +42,44 @@ export interface MiniStyle {
   time?: number;
 }
 
+/** Whether the card's miniature hovers on a flight stand. */
+export function isFlier(cardId: string): boolean {
+  const card = CARDS[cardId];
+  return card?.kind === "unit" && !!card.flying;
+}
+
+/** The round base a miniature stands on, centred on (0, 0): a painted coin with a visible edge. */
+function drawBase(g: Graphics, r: number, style: MiniStyle): void {
+  const { paint, alpha = 1, rim } = style;
+  const ink = { color: TABLE.ink, width: Math.max(1.2, r / 11), alpha };
+  g.ellipse(0, r * 0.16, r, r * 0.48).fill({ color: shade(paint, 0.35), alpha }).stroke(ink);
+  g.ellipse(0, 0, r, r * 0.48).fill({ color: shade(paint, 0.62), alpha }).stroke(rim === undefined ? ink : { color: rim, width: Math.max(2.5, r / 5), alpha });
+}
+
+/** A flier's base with a clear plastic rod rising `height` from its centre, where the figure is pinned. */
+export function drawStand(g: Graphics, r: number, height: number, style: MiniStyle): void {
+  const alpha = style.alpha ?? 1;
+  drawBase(g, r * 0.8, style);
+  g.moveTo(0, 0).lineTo(0, -height).stroke({ color: 0xffffff, width: Math.max(2, r / 6), alpha: alpha * 0.45, cap: "round" });
+  g.moveTo(-r * 0.04, 0).lineTo(-r * 0.04, -height).stroke({ color: 0xffffff, width: 1, alpha: alpha * 0.7 });
+}
+
 /**
  * A painted miniature standing on a round base, facing right, with its base centred on (0, 0).
- * `r` is the base radius; the figure stands about 2.2 r tall. Callers mirror and move it with
- * the Graphics transform.
+ * `r` is the base radius; the figure stands about 2.2 r tall. Fliers have no base here: (0, 0) is
+ * where the figure sits on its flight stand (see drawStand). Callers mirror and move it with the
+ * Graphics transform.
  */
 export function drawMini(g: Graphics, cardId: string, r: number, style: MiniStyle): void {
   const card = CARDS[cardId];
   if (card?.kind !== "unit") return;
-  const { paint, alpha = 1, rim, time = 0 } = style;
+  const { paint, alpha = 1, time = 0 } = style;
   const u = r;
   const ink = { color: TABLE.ink, width: Math.max(1.2, r / 11), alpha };
   const fill = (color: number) => ({ color, alpha });
   const dark = shade(paint, 0.62);
 
-  // Base: a painted coin with a visible edge.
-  g.ellipse(0, u * 0.16, u, u * 0.48).fill(fill(shade(paint, 0.35))).stroke(ink);
-  g.ellipse(0, 0, u, u * 0.48).fill(fill(dark)).stroke(rim === undefined ? ink : { color: rim, width: Math.max(2.5, r / 5), alpha });
+  if (!card.flying) drawBase(g, r, style);
 
   const y0 = -u * 0.08;
   /** A meeple-like body `w` wide and `h` tall, leaning forward by `lean`. */
@@ -247,6 +268,54 @@ export function drawMini(g: Graphics, cardId: string, r: number, style: MiniStyl
       g.rect(0.16 * u, -0.9 * u, 0.12 * u, 0.36 * u).fill(fill(TABLE.cloth));
       break;
     }
+    case "hawk": {
+      // Wings beating over a small body, talons out.
+      const flap = Math.sin(time * 14) * 0.35;
+      g.poly([-0.05 * u, -0.6 * u, -0.45 * u, (-1.45 + flap) * u, 0.25 * u, (-1.15 + flap * 0.5) * u, 0.25 * u, -0.7 * u]).fill(fill(dark)).stroke(ink);
+      g.poly([-0.75 * u, -0.45 * u, -1.15 * u, -0.25 * u, -1.15 * u, -0.6 * u]).fill(fill(dark)).stroke(ink);
+      for (const tx of [-0.05, 0.15]) line(tx, -0.3, tx + 0.05, -0.08, TABLE.spark, 0.06);
+      g.ellipse(-0.1 * u, -0.48 * u, 0.7 * u, 0.28 * u).fill(fill(paint)).stroke(ink);
+      g.ellipse(-0.05 * u, -0.38 * u, 0.4 * u, 0.12 * u).fill(fill(TABLE.cloth));
+      head(0.62, -0.68, 0.24, TABLE.cloth);
+      g.poly([0.8 * u, -0.74 * u, 1.05 * u, -0.64 * u, 0.82 * u, -0.56 * u]).fill(fill(TABLE.spark)).stroke(ink);
+      g.circle(0.68 * u, -0.74 * u, 0.05 * u).fill(fill(TABLE.ink));
+      g.poly([-0.25 * u, -0.6 * u, -0.95 * u, (-1.55 - flap) * u, -0.05 * u, (-1.3 - flap * 0.5) * u, 0.35 * u, -0.7 * u]).fill(fill(shade(paint, 1.15))).stroke(ink);
+      break;
+    }
+    case "balloon": {
+      // A striped envelope over a wicker basket, a flickering burner between them.
+      for (const bx of [-0.36, 0.36]) line(bx, -0.36, bx * 1.4, -1.0, TABLE.ink, 0.04);
+      g.roundRect(-0.4 * u, -0.4 * u, 0.8 * u, 0.42 * u, 0.08 * u).fill(fill(TABLE.wood)).stroke(ink);
+      line(-0.36, -0.2, 0.36, -0.2, TABLE.woodDark, 0.05);
+      head(0.1, -0.52, 0.17);
+      g.circle(0, -0.9 * u, (0.08 + 0.05 * Math.abs(Math.sin(time * 18))) * u).fill(fill(TABLE.spark));
+      g.ellipse(0, -1.7 * u, 0.82 * u, 0.82 * u).fill(fill(paint)).stroke(ink);
+      g.ellipse(0, -1.7 * u, 0.3 * u, 0.8 * u).fill(fill(TABLE.cloth)).stroke(ink);
+      g.poly([-0.55 * u, -1.15 * u, 0.55 * u, -1.15 * u, 0.3 * u, -0.95 * u, -0.3 * u, -0.95 * u]).fill(fill(dark)).stroke(ink);
+      g.ellipse(-0.4 * u, -2.0 * u, 0.14 * u, 0.28 * u).fill({ color: 0xffffff, alpha: alpha * 0.25 });
+      break;
+    }
+    case "drake": {
+      // A small dragon: tail and far wing behind, near wing over its back.
+      const flap = Math.sin(time * 8) * 0.3;
+      g.poly([-0.1 * u, -0.8 * u, -0.25 * u, (-1.75 + flap) * u, 0.45 * u, (-1.3 + flap * 0.5) * u]).fill(fill(dark)).stroke(ink);
+      for (const [color, width] of [[TABLE.ink, 0.22 * u + ink.width * 2], [paint, 0.22 * u]]) {
+        g.moveTo(-0.6 * u, -0.6 * u).quadraticCurveTo(-1.1 * u, -0.45 * u, -1.35 * u, -0.85 * u).stroke({ color, width, alpha, cap: "round" });
+      }
+      g.poly([-1.35 * u, -0.85 * u, -1.6 * u, -0.95 * u, -1.4 * u, -1.1 * u]).fill(fill(dark)).stroke(ink);
+      g.ellipse(-0.05 * u, -0.6 * u, 0.75 * u, 0.36 * u).fill(fill(paint)).stroke(ink);
+      g.ellipse(0.05 * u, -0.45 * u, 0.5 * u, 0.15 * u).fill(fill(shade(paint, 1.35)));
+      for (const [color, width] of [[TABLE.ink, 0.26 * u + ink.width * 2], [paint, 0.26 * u]]) {
+        g.moveTo(0.5 * u, -0.75 * u).quadraticCurveTo(0.75 * u, -1.0 * u, 0.85 * u, -1.15 * u).stroke({ color, width, alpha, cap: "round" });
+      }
+      g.ellipse(1.0 * u, -1.18 * u, 0.32 * u, 0.2 * u).fill(fill(paint)).stroke(ink);
+      g.poly([0.85 * u, -1.32 * u, 0.6 * u, -1.6 * u, 0.98 * u, -1.36 * u]).fill(fill(TABLE.cloth)).stroke(ink);
+      g.circle(1.05 * u, -1.24 * u, 0.05 * u).fill(fill(TABLE.spark));
+      g.circle(1.32 * u, -1.12 * u, (0.06 + 0.04 * Math.abs(Math.sin(time * 9))) * u).fill(fill(0xff9a3c));
+      g.poly([-0.35 * u, -0.85 * u, -0.95 * u, (-1.95 - flap) * u, -0.55 * u, (-1.3 - flap * 0.5) * u, -1.25 * u, (-1.35 - flap * 0.6) * u, 0.15 * u, -0.8 * u])
+        .fill(fill(shade(paint, 0.85))).stroke(ink);
+      break;
+    }
     default:
       body(1.1, 1.0);
       head(0, -1.35, 0.34);
@@ -255,7 +324,7 @@ export function drawMini(g: Graphics, cardId: string, r: number, style: MiniStyl
 
 /** How tall a miniature stands above its base centre, for health bars and floaters. */
 export function miniHeight(cardId: string, r: number): number {
-  const tall: Record<string, number> = { swarm: 1.2, catapult: 1.7, golem: 1.9, spearman: 2.5, knight: 2.2, berserker: 2.2, wolfrider: 2.0 };
+  const tall: Record<string, number> = { swarm: 1.2, catapult: 1.7, golem: 1.9, spearman: 2.5, knight: 2.2, berserker: 2.2, wolfrider: 2.0, hawk: 1.6, balloon: 2.6, drake: 2.0 };
   return (tall[cardId] ?? 1.8) * r;
 }
 
