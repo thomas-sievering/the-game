@@ -111,6 +111,8 @@ test("two farmers buy land, grow, sell, fill an order and sabotage", async ({ br
 });
 
 test("the host moves themselves to spectators and starts a match they watch", async ({ browser }) => {
+  // Three pages render the farm at once, which is slow on CI's software WebGL.
+  test.setTimeout(300_000);
   const [alice, bob, carol] = await Promise.all([0, 1, 2].map(async () => (await browser.newContext()).newPage()));
 
   await alice.goto("/");
