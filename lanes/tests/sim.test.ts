@@ -10,6 +10,7 @@ import {
   INVEST_COST,
   MATCH_TICKS,
   MAX_LEVEL,
+  RESEARCH,
   START_GOLD,
   SHRINE,
   START_INCOME,
@@ -19,6 +20,7 @@ import {
   createBattle,
   invest,
   play,
+  research,
   rowCenter,
   scaled,
   sell,
@@ -30,10 +32,11 @@ const run = (battle: Battle, ticks: number) => {
   for (let i = 0; i < ticks; i++) step(battle);
 };
 
-/** Puts a card into hand slot 0 of a side so tests don't depend on the shuffle. */
+/** Puts a card into hand slot 0 of a side so tests don't depend on the shuffle or tiers. */
 const give = (battle: Battle, side: 0 | 1, card: string) => {
   battle.players[side].hand[0] = card;
   battle.players[side].gold = 1000;
+  battle.players[side].tier = 3;
 };
 
 describe("hand and deck", () => {
@@ -55,6 +58,7 @@ describe("hand and deck", () => {
     const battle = createBattle();
     const player = battle.players[0];
     player.gold = 100_000;
+    player.tier = 3;
     for (let i = 0; i < 25; i++) {
       battle.tick += 1000; // keep spells off cooldown
       player.grid.fill(""); // keep the pad free
@@ -100,6 +104,7 @@ describe("economy", () => {
   it("charges for cards and refuses when gold is short", () => {
     const battle = createBattle();
     battle.players[0].hand[0] = "golem";
+    battle.players[0].tier = 3;
     battle.players[0].gold = CARDS.golem.cost - 1;
     expect(play(battle, 0, 0, 0)).toBe("Not enough gold");
     expect(battle.players[0].grid[0]).toBe("");
@@ -124,6 +129,47 @@ describe("economy", () => {
     const gold = battle.players[0].gold;
     step(battle);
     expect(battle.players[0].gold).toBe(gold + unitCard("runner").bounty);
+  });
+});
+
+describe("tiers", () => {
+  it("every card has a tier and the starter deck is mostly tier 1", () => {
+    for (const card of Object.values(CARDS)) expect([1, 2, 3]).toContain(card.tier);
+    expect(STARTER_DECK.filter((id) => CARDS[id].tier === 1).length).toBeGreaterThanOrEqual(8);
+  });
+
+  it("cards above your tier can't be played", () => {
+    const battle = createBattle();
+    const player = battle.players[0];
+    player.hand[0] = "knight";
+    player.gold = 1000;
+    expect(play(battle, 0, 0, 0)).toBe("Knight needs tier 2");
+    expect(player.gold).toBe(1000);
+    player.tier = 2;
+    expect(play(battle, 0, 0, 0)).toBeNull();
+  });
+
+  it("research costs gold, takes time and tier 3 costs more than tier 2", () => {
+    expect(RESEARCH[3].cost).toBeGreaterThan(RESEARCH[2].cost);
+    expect(RESEARCH[3].ticks).toBeGreaterThan(RESEARCH[2].ticks);
+    const battle = createBattle();
+    const player = battle.players[0];
+    player.gold = RESEARCH[2].cost - 1;
+    expect(research(battle, 0)).toBe("Not enough gold");
+    player.gold = 10000;
+    expect(research(battle, 0)).toBeNull();
+    expect(player.gold).toBe(10000 - RESEARCH[2].cost);
+    expect(research(battle, 0)).toBe("Already researching");
+    run(battle, RESEARCH[2].ticks - 1);
+    expect(player.tier).toBe(1);
+    step(battle);
+    expect(player.tier).toBe(2);
+    const gold = player.gold;
+    expect(research(battle, 0)).toBeNull();
+    expect(player.gold).toBe(gold - RESEARCH[3].cost);
+    run(battle, RESEARCH[3].ticks);
+    expect(player.tier).toBe(3);
+    expect(research(battle, 0)).toBe("Already at the top tier");
   });
 });
 
@@ -481,6 +527,7 @@ describe("determinism", () => {
       for (let i = 0; i < 6000; i++) {
         if (i % 97 === 0) for (const side of [0, 1] as const) play(battle, side, i % 4, (i * 7 + side) % 12);
         if (i % 500 === 0) invest(battle, (i / 500) % 2 === 0 ? 0 : 1);
+        if (i % 1500 === 0) for (const side of [0, 1] as const) research(battle, side);
         step(battle);
       }
       return JSON.stringify(battle);

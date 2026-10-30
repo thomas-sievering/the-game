@@ -1,7 +1,7 @@
 import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
 import { CARDS, type Card, DECK_SIZE, MAX_COPIES, STARTER_DECK, deckError } from "../shared/cards";
-import { BASE_HP, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, MAX_LEVEL, SHRINE, TICK_RATE, WAVE_TICKS, sellValue } from "../shared/sim";
+import { BASE_HP, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, MAX_LEVEL, MAX_TIER, RESEARCH, SHRINE, TICK_RATE, WAVE_TICKS, sellValue } from "../shared/sim";
 import { LanesState, type PlayerState } from "../shared/state";
 import { isMuted, sfx, toggleMute } from "./audio";
 import { type Board, Renderer } from "./render";
@@ -25,7 +25,7 @@ let draft: string[] | null = null;
 /** Own pad picked for selling, or -1. */
 let selectedCell = -1;
 /** What the last state showed, to play sounds for changes the server made. */
-let heard = { levels: [] as number[], income: 0, tick: -1, phase: "" };
+let heard = { levels: [] as number[], income: 0, tier: 1, tick: -1, phase: "" };
 
 function show(screen: "home" | "deck" | "lobby" | "game") {
   $("home").classList.toggle("hidden", screen !== "home");
@@ -82,13 +82,15 @@ function renderDeck(cards: string[]) {
   const error = deckError(cards);
   $("deck-error").textContent = cards.length < DECK_SIZE ? "" : (error ?? "");
   $<HTMLButtonElement>("deck-done").disabled = !!error;
-  $("deck-rules").textContent = `Pick ${DECK_SIZE} cards, up to ${MAX_COPIES} copies of each. Click a card to add it, right-click to remove it.`;
+  $("deck-rules").textContent =
+    `Pick ${DECK_SIZE} cards, up to ${MAX_COPIES} copies of each. Click a card to add it, right-click to remove it. ` +
+    `Cards of tier II and III can only be played after researching that tier in the match.`;
   const container = $("deck-cards");
   if (!container.children.length) {
     container.innerHTML = Object.values(CARDS)
       .map(
         (card) =>
-          `<div class="deck-slot" data-card="${card.id}"><div class="hand-card ${card.kind}">${cardHtml(card, null, 0)}</div>` +
+          `<div class="deck-slot" data-card="${card.id}"><div class="hand-card ${card.kind}">${cardHtml(card, null, 0, false)}</div>` +
           `<div class="counter"><button data-delta="-1" aria-label="Remove ${card.name}">−</button>` +
           `<span class="copies"></span><button data-delta="1" aria-label="Add ${card.name}">+</button></div></div>`,
       )
@@ -182,6 +184,7 @@ function render() {
     $("income").classList.toggle("shrine", shrine > 0);
     $("invest").textContent = `Invest ${self.investCost} → +1/s`;
     $<HTMLButtonElement>("invest").disabled = self.gold < self.investCost;
+    renderResearch(self, s.tick);
     renderHand(self, s.tick);
     if (selectedCell !== -1 && !self.grid[selectedCell]) selectPad(-1);
     renderSell(self);
@@ -202,27 +205,49 @@ function render() {
   }
 }
 
+const ROMAN = ["", "I", "II", "III"];
+
+function renderResearch(self: PlayerState, tick: number) {
+  const button = $<HTMLButtonElement>("research");
+  const researching = self.researchDone > 0;
+  button.classList.toggle("researching", researching);
+  if (self.tier >= MAX_TIER) {
+    button.textContent = `Tier ${ROMAN[self.tier]} · max`;
+    button.disabled = true;
+  } else if (researching) {
+    button.textContent = `Researching ${ROMAN[self.tier + 1]} · ${Math.ceil(Math.max(0, self.researchDone - tick) / TICK_RATE)} s`;
+    button.disabled = true;
+  } else {
+    const { cost, ticks } = RESEARCH[(self.tier + 1) as 2 | 3];
+    button.textContent = `Tier ${ROMAN[self.tier + 1]} ${cost} · ${ticks / TICK_RATE} s`;
+    button.disabled = self.gold < cost;
+  }
+}
+
 function renderHand(self: PlayerState, tick: number) {
   const buttons = $("hand").children;
   for (let i = 0; i < HAND_SIZE; i++) {
     const button = buttons[i] as HTMLButtonElement;
     const card = CARDS[self.hand[i] ?? ""];
     const cooldown = card?.kind === "spell" ? Math.max(0, (self.ready.get(card.id) ?? 0) - tick) : 0;
-    const key = `${card?.id}|${Math.ceil(cooldown / TICK_RATE)}`;
+    const locked = !!card && card.tier > self.tier;
+    const key = `${card?.id}|${Math.ceil(cooldown / TICK_RATE)}|${locked}`;
     if (button.dataset.key !== key) {
       button.dataset.key = key;
       button.className = `hand-card ${card?.kind ?? "empty"}`;
-      button.innerHTML = card ? cardHtml(card, i, cooldown) : "";
+      button.innerHTML = card ? cardHtml(card, i, cooldown, locked) : "";
     }
-    button.classList.toggle("poor", !card || self.gold < card.cost || cooldown > 0);
+    button.classList.toggle("poor", !card || locked || self.gold < card.cost || cooldown > 0);
     button.classList.toggle("selected", i === selected);
   }
 }
 
-/** `slot` is the hand slot whose shortcut key to show, or null outside the hand. */
-function cardHtml(card: Card, slot: number | null, cooldown: number): string {
+/** `slot` is the hand slot whose shortcut key to show, or null outside the hand; `locked` covers a card above your tier. */
+function cardHtml(card: Card, slot: number | null, cooldown: number, locked: boolean): string {
   const top =
-    `<span class="cost">${card.cost}</span>${slot === null ? "" : `<span class="key">${slot + 1}</span>`}` +
+    `<span class="cost">${card.cost}</span><span class="tier t${card.tier}" title="Tier ${card.tier}">${ROMAN[card.tier]}</span>` +
+    (slot === null ? "" : `<span class="key">${slot + 1}</span>`) +
+    (locked ? `<span class="locked">🔒 Tier ${ROMAN[card.tier]}</span>` : "") +
     `<span class="art"><span class="mini" style="background-image: url('${renderer.cardArt(card.id)}')"></span></span>`;
   if (card.kind === "spell") {
     return (
@@ -291,10 +316,11 @@ function playFx(events: Fx[]) {
   }
 }
 
-/** Sounds for changes that only show up in the state: your own placements, sales and investments, waves, the result. */
+/** Sounds for changes that only show up in the state: your own placements, sales, investments and tiers, waves, the result. */
 function playStateSounds(s: LanesState, self: PlayerState | undefined) {
   const levels = [...(self?.levels ?? [])];
   const income = self?.income ?? 0;
+  const tier = self?.tier ?? 1;
   // The first render of a match (or after rejoining) only records the state.
   if (heard.phase === "playing" && s.tick >= heard.tick) {
     for (let cell = 0; cell < levels.length; cell++) {
@@ -303,6 +329,7 @@ function playStateSounds(s: LanesState, self: PlayerState | undefined) {
       else if (levels[cell] < before) sfx.sell();
     }
     if (income > heard.income) sfx.invest();
+    if (tier > heard.tier) sfx.levelUp(tier);
     if (Math.floor(s.tick / WAVE_TICKS) > Math.floor(heard.tick / WAVE_TICKS)) sfx.wave();
     else if (s.phase === "playing" && s.tick > heard.tick) {
       const secondsLeft = (t: number) => Math.ceil((WAVE_TICKS - (t % WAVE_TICKS)) / TICK_RATE);
@@ -315,14 +342,17 @@ function playStateSounds(s: LanesState, self: PlayerState | undefined) {
       else sfx.wave();
     }
   }
-  heard = { levels, income, tick: s.tick, phase: s.phase };
+  heard = { levels, income, tier, tick: s.tick, phase: s.phase };
 }
 
 /** Clicking a unit card arms it for placement; clicking a spell casts it. */
 function useSlot(slot: number) {
   const card = CARDS[me()?.hand[slot] ?? ""];
   if (!room || room.state.phase !== "playing" || !card) return;
-  if (card.kind === "spell") {
+  if (card.tier > (me()?.tier ?? 1)) {
+    toast(`${card.name} needs tier ${ROMAN[card.tier]}; research it first (T)`);
+    sfx.error();
+  } else if (card.kind === "spell") {
     select(-1);
     room.send("play", { hand: slot });
   } else {
@@ -368,7 +398,7 @@ async function enter(join: () => Promise<Room<any, LanesState>>) {
   });
   room.onLeave(() => {
     room = null;
-    heard = { levels: [], income: 0, tick: -1, phase: "" };
+    heard = { levels: [], income: 0, tier: 1, tick: -1, phase: "" };
     select(-1);
     selectPad(-1);
     render();
@@ -404,6 +434,7 @@ function main() {
     $("hand").appendChild(button);
   }
   $("invest").onclick = () => room?.send("invest");
+  $("research").onclick = () => room?.send("research");
   window.addEventListener("keydown", (e) => {
     if (draft && e.key === "Escape") return closeDeck(false);
     if (room?.state.phase !== "playing" || e.target instanceof HTMLInputElement) return;
@@ -412,6 +443,7 @@ function main() {
       select(-1);
       selectPad(-1);
     } else if (e.key.toLowerCase() === "i") room.send("invest");
+    else if (e.key.toLowerCase() === "t") room.send("research");
     else if (e.key.toLowerCase() === "s" && selectedCell !== -1) sellPad(selectedCell);
     else if (e.key.toLowerCase() === "m") $("mute").click();
   });
@@ -463,6 +495,12 @@ main();
   },
   get levels() {
     return [...(me()?.levels ?? [])];
+  },
+  get tier() {
+    return me()?.tier ?? 0;
+  },
+  get researchDone() {
+    return me()?.researchDone ?? 0;
   },
   get side() {
     return me()?.side ?? -1;

@@ -30,7 +30,7 @@ async function newContext(browser: Browser) {
 /** Places the first affordable unit card in the hand on a cell via keyboard + click. */
 async function placeUnit(page: Page, cell: number): Promise<boolean> {
   const { hand, gold } = await lanes(page, (l) => ({ hand: l.hand, gold: l.gold }));
-  const slot = hand.findIndex((id) => CARDS[id]?.kind === "unit" && CARDS[id].cost <= gold);
+  const slot = hand.findIndex((id) => CARDS[id]?.kind === "unit" && CARDS[id].tier === 1 && CARDS[id].cost <= gold);
   if (slot === -1) return false;
   await page.keyboard.press(String(slot + 1));
   const point = await lanes(page, (l, c) => l.cellOnScreen(c), cell);
@@ -42,7 +42,7 @@ async function placeUnit(page: Page, cell: number): Promise<boolean> {
 /** Casts a spell from the hand if one is there and affordable. */
 async function castSpell(page: Page): Promise<boolean> {
   const { hand, gold } = await lanes(page, (l) => ({ hand: l.hand, gold: l.gold }));
-  const slot = hand.findIndex((id) => CARDS[id]?.kind === "spell" && CARDS[id].cost <= gold);
+  const slot = hand.findIndex((id) => CARDS[id]?.kind === "spell" && CARDS[id].tier === 1 && CARDS[id].cost <= gold);
   if (slot === -1) return false;
   await page.locator(".hand-card").nth(slot).click();
   await expect.poll(() => lanes(page, (l) => l.spellsCast)).toBeGreaterThan(0);
@@ -118,6 +118,7 @@ test("two players build, a wave fights and a spell is cast", { tag: "@prod" }, a
   await alice.click("#start");
   await expect.poll(() => lanes(bob, (l) => l.phase)).toBe("playing");
   await expect(alice.locator(".hand-card strong")).toHaveCount(4);
+  await expect(alice.locator("#research")).toHaveText("Tier II 250 · 40 s");
 
   for (const [page, cells] of [
     [alice, [5, 7]],
@@ -227,7 +228,7 @@ test("playing a unit onto the same unit levels it up and the field shows its ran
   for (let i = 0; i < 60; i++) {
     const { hand, gold, grid, levels } = await lanes(alice, (l) => ({ hand: l.hand, gold: l.gold, grid: l.grid, levels: l.levels }));
     if (done(levels)) break;
-    const slot = hand.findIndex((id) => CARDS[id]?.kind === "unit" && CARDS[id].cost <= gold);
+    const slot = hand.findIndex((id) => CARDS[id]?.kind === "unit" && CARDS[id].tier === 1 && CARDS[id].cost <= gold);
     if (slot === -1) {
       await alice.waitForTimeout(1000);
       continue;
