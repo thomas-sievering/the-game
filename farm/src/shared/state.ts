@@ -14,6 +14,8 @@ export const PlayerState = schema(
     barn: t.map("number"),
     /** Tick at which each sabotage, and the buyout, can be used again. */
     ready: t.map("number"),
+    /** Researched techs, by id. */
+    tech: t.map("boolean"),
   },
   "PlayerState",
 );

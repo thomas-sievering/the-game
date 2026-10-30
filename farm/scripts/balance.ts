@@ -1,12 +1,14 @@
 // Plays greedy bots against each other for a full match and prints how the economy went.
-// Run: npx tsx scripts/balance.ts [matches]
+// Run: npx tsx scripts/balance.ts [matches] [--no-research-1]  (the flag stops side 1 researching, to compare)
 import {
   CROPS,
   CROP_IDS,
   type CropId,
   type Farm,
   MATCH_TICKS,
+  TECH,
   type Side,
+  type TechId,
   TICK_RATE,
   TILE_COUNT,
   buy,
@@ -18,11 +20,16 @@ import {
   landPrice,
   netWorth,
   plant,
+  research,
   harvest,
   sabotage,
   sell,
   step,
 } from "../src/shared/sim";
+
+/** The order bots research in, when they have coins to spare. */
+const RESEARCH: TechId[] = ["fertilizer", "haggling", "survey", "guild", "irrigation", "wholesale", "fences", "hybrid", "dogs"];
+const NO_RESEARCH = process.argv.includes("--no-research-1");
 
 /** Each bot acts once a second, like a busy human clicking around. */
 function bot(farm: Farm, side: Side, style: "farmer" | "saboteur") {
@@ -36,6 +43,9 @@ function bot(farm: Farm, side: Side, style: "farmer" | "saboteur") {
   for (const c of [...farm.contracts]) fill(farm, side, c.id);
   for (const id of CROP_IDS) if (player.barn[id] > 2) sell(farm, side, id, player.barn[id]);
   if (style === "saboteur" && farm.tick % 300 === 0) sabotage(farm, side, "crows");
+  // Research the next tech once selling leaves enough to keep farming.
+  const next = RESEARCH.find((id) => !player.tech[id]);
+  if (next && !(NO_RESEARCH && side === 1) && player.coins >= TECH[next].cost + 40) research(farm, side, next);
   // Expand while land is cheap compared to coins, preferring wet tiles.
   const options = farm.tiles
     .map((_, i) => i)

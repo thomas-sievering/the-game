@@ -7,6 +7,7 @@ import {
   type Farm,
   type SabotageId,
   type Side,
+  type TechId,
   TICK_RATE,
   buy,
   capacity,
@@ -22,6 +23,7 @@ import {
   plant,
   build,
   price,
+  research,
   sabotage,
   sell,
   step,
@@ -71,6 +73,7 @@ export class FarmRoom extends Room<{ state: FarmState }> {
         const target = typeof m?.target === "number" || typeof m?.target === "string" ? m.target : undefined;
         return sabotage(farm, side, m?.id as SabotageId, target as number | CropId | undefined);
       }),
+    research: (client: Client, m: { id?: unknown }) => this.act(client, (farm, side) => research(farm, side, m?.id as TechId)),
     concede: (client: Client) =>
       this.act(client, (farm, side) => {
         this.state.endNote = `${this.state.players.find((p) => p.side === side)?.name ?? "A farmer"} gave up`;
@@ -215,6 +218,7 @@ export class FarmRoom extends Room<{ state: FarmState }> {
       view.capacity = capacity(farm, side);
       syncMap(view.barn, player.barn);
       syncMap(view.ready, player.ready);
+      syncMap(view.tech, player.tech);
     }
     farm.tiles.forEach((tile, i) => {
       const fields = {
@@ -253,7 +257,7 @@ export class FarmRoom extends Room<{ state: FarmState }> {
   }
 }
 
-function syncMap(view: { get(key: string): number | undefined; set(key: string, value: number): unknown }, values: Record<string, number>) {
+function syncMap<T>(view: { get(key: string): T | undefined; set(key: string, value: T): unknown }, values: Record<string, T>) {
   for (const [key, value] of Object.entries(values)) if (view.get(key) !== value) view.set(key, value);
 }
 

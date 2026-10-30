@@ -1,6 +1,8 @@
 import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
 import {
+  BRANCHES,
+  BRANCH_IDS,
   BUILDINGS,
   BUILDING_IDS,
   type BuildingId,
@@ -22,7 +24,11 @@ import {
   ROWS,
   SABOTAGE,
   type SabotageId,
+  TECH,
+  TECH_IDS,
   TICK_RATE,
+  TRADE,
+  type TechId,
   WEEDS_TICKS,
   rateFor,
   tileAt,
@@ -63,6 +69,8 @@ let toastTimer = 0;
 let history: Record<string, number[]> = {};
 let lastSample = -1;
 let contractKey = "";
+/** Whose tech tree is open, by side, or -1 when it's closed. */
+let techSide = -1;
 /** The farmer a spectator follows; their panel and side of the board are shown. */
 let watchSide = 0;
 /** Recent moves of both farmers, newest first, shown to spectators. */
@@ -136,6 +144,10 @@ function render() {
     const player = bySide(el.dataset.who === "me" ? mySide : 1 - mySide);
     el.querySelector(".farmer-name")!.textContent = `${player?.name ?? "?"}${player && !player.connected ? " · away" : ""}`;
     el.querySelector(".farmer-worth")!.textContent = `${player?.netWorth ?? 0} worth`;
+    const badge = el.querySelector<HTMLButtonElement>(".tech-badge")!;
+    badge.dataset.side = String(player?.side ?? -1);
+    badge.textContent = `🔬 ${player ? techCount(player) : 0}/${TECH_IDS.length}`;
+    badge.classList.toggle("open", !!player && techSide === player.side);
   }
   $("match-time").textContent = clock(Math.max(0, MATCH_TICKS - s.tick));
 
@@ -155,7 +167,11 @@ function render() {
     renderMarket(s, shown, !self);
     renderContracts(s, shown, !self);
     renderSabotage(s, shown, !self);
+    const open = $("tech-open");
+    open.textContent = `🔬 Tech tree · ${techCount(shown)}/${TECH_IDS.length} (T)`;
+    open.classList.toggle("ready", !!self && TECH_IDS.some((id) => canResearch(self, id) && self.coins >= TECH[id].cost));
   }
+  renderTech(s, self);
   renderer.setTiles([...s.tiles]);
   updateHint();
   refreshTip();
@@ -173,6 +189,50 @@ function render() {
     $("home-again").onclick = () => void room?.leave();
     aim(false);
   }
+}
+
+const has = (player: PlayerState | undefined, id: TechId) => !!player?.tech.get(id);
+const techCount = (player: PlayerState) => TECH_IDS.filter((id) => has(player, id)).length;
+/** Not researched yet, and the tech above it in its branch is. */
+const canResearch = (player: PlayerState, id: TechId) => !has(player, id) && (!TECH[id].requires || has(player, TECH[id].requires));
+
+/** Opens a farmer's tech tree, or closes it when it's already open or side is -1. */
+function openTech(side: number) {
+  techSide = techSide === side || side === -1 ? -1 : side;
+  if (room?.state) render();
+}
+
+function renderTech(s: FarmState, self: PlayerState | undefined) {
+  const player = [...s.players].find((p) => p.side === techSide);
+  $("tech").classList.toggle("hidden", !player);
+  if (!player) return;
+  const mine = player === self;
+  const playing = s.phase === "playing";
+  $("tech-title").textContent = mine ? "Your tech tree" : `${player.name}'s tech tree`;
+  for (const tab of $("tech-tabs").children as HTMLCollectionOf<HTMLButtonElement>) {
+    const side = Number(tab.dataset.side);
+    const owner = [...s.players].find((p) => p.side === side);
+    tab.textContent = `${owner && owner === self ? "You" : (owner?.name ?? "?")} · ${owner ? techCount(owner) : 0}/${TECH_IDS.length}`;
+    tab.classList.toggle("selected", side === techSide);
+    tab.classList.toggle("enemy", side !== renderer.mySide);
+  }
+  for (const node of $("tech-tree").querySelectorAll<HTMLElement>(".tech-node")) {
+    const id = node.dataset.tech as TechId;
+    const { cost, requires } = TECH[id];
+    const done = has(player, id);
+    const open = canResearch(player, id);
+    node.classList.toggle("done", done);
+    node.classList.toggle("locked", !done && !open);
+    const button = node.querySelector<HTMLButtonElement>("button")!;
+    button.classList.toggle("hidden", !mine || !open || !playing);
+    button.disabled = player.coins < cost;
+    node.querySelector(".tech-state")!.textContent = done
+      ? "✓ Researched"
+      : mine && open && playing
+        ? ""
+        : `${open ? "Not yet" : `Needs ${TECH[requires!].name}`} · ${cost} coins`;
+  }
+  $("tech-note").textContent = `${mine ? "Each step needs the one above it." : `${player.name} has ${player.coins} coins.`} Research counts at half its cost toward net worth.`;
 }
 
 function barnCount(player: PlayerState): number {
@@ -233,6 +293,8 @@ function feedText(fx: Fx): string | null {
       return `${who} sowed weeds on ${rival}'s land`;
     case "dump":
       return `${who} dumped ${CROP_ICONS[fx.crop]} on the market`;
+    case "research":
+      return `${who} researched 🔬 ${TECH[fx.tech].name}`;
     default:
       return null;
   }
@@ -253,8 +315,24 @@ function renderTools(self: PlayerState) {
 }
 
 /** Seconds a crop takes from seed to ripe on a tile like this. */
-function growSeconds(crop: CropId, terrain: string, wet: boolean, weeds = false): number {
-  return Math.ceil((CROPS[crop].growTicks * GROWTH_FULL) / rateFor(terrain, wet, weeds) / TICK_RATE);
+function growSeconds(crop: CropId, terrain: string, wet: boolean, weeds = false, fertilized = false): number {
+  return Math.ceil((CROPS[crop].growTicks * GROWTH_FULL) / rateFor(terrain, wet, weeds, fertilized) / TICK_RATE);
+}
+
+/** What the next neutral tile of this terrain costs a player; surveying slows the rise. */
+function landCost(player: PlayerState, terrain: string): number {
+  return LAND.base + player.bought * (has(player, "survey") ? LAND.surveyStep : LAND.step) + (terrain === "rich" ? LAND.rich : 0);
+}
+
+/** What buying out a tile costs; fences on the owner's land make it dearer. */
+function buyoutCost(t: TileState): number {
+  const owner = [...(room?.state.players ?? [])].find((p) => p.side === t.owner);
+  return t.value * (has(owner, "fences") ? BUYOUT.fencedFactor : BUYOUT.factor);
+}
+
+/** How far a well owned by this side waters: irrigation adds a ring. */
+function wellReach(side: number): number {
+  return has([...(room?.state.players ?? [])].find((p) => p.side === side), "irrigation") ? 2 : 1;
 }
 
 function toolTip(t: Tool, self: PlayerState): string {
@@ -266,10 +344,11 @@ function toolTip(t: Tool, self: PlayerState): string {
     const regrow = crop.regrowTicks
       ? `<div class="tip-row">Grows back ${crop.regrowTicks / TICK_RATE} s after each harvest, no replanting.</div>`
       : "";
+    const fert = has(self, "fertilizer");
     return (
       `<b>${CROP_ICONS[crop.id]} ${crop.name} seed · ${crop.seed} coins</b>${key}` +
-      `<div class="tip-row">Ripe in ${growSeconds(crop.id, "grass", true)} s watered, ${growSeconds(crop.id, "grass", false)} s dry, ` +
-      `${growSeconds(crop.id, "rich", true)} s on watered rich soil.</div>` +
+      `<div class="tip-row">Ripe in ${growSeconds(crop.id, "grass", true, false, fert)} s watered, ${growSeconds(crop.id, "grass", false, false, fert)} s dry, ` +
+      `${growSeconds(crop.id, "rich", true, false, fert)} s on watered rich soil${fert ? " (with fertilizer)" : ""}.</div>` +
       regrow +
       `<div class="tip-row">Sells for ${now} now (normally ${crop.price}).</div>` +
       `<div class="tip-muted">Click one of your empty plots to plant.</div>${poor}`
@@ -323,7 +402,7 @@ function renderMarket(s: FarmState, self: PlayerState, readOnly: boolean) {
     sell.disabled = readOnly || stock === 0;
     sell.textContent = stock ? `Sell ${stock}` : "Sell";
     sell.dataset.tip = stock
-      ? `<b>Sell all ${stock} for about ${estimate(price, CROPS[crop].price, stock)} coins</b>` +
+      ? `<b>Sell all ${stock} for about ${estimate(price, CROPS[crop].price, stock, self)} coins</b>` +
         `<div class="tip-muted">The price drops with each unit sold, then recovers.</div>`
       : `You have no ${CROPS[crop].name.toLowerCase()} to sell.`;
     const dump = row.querySelector<HTMLButtonElement>("button.dump")!;
@@ -338,13 +417,15 @@ function renderMarket(s: FarmState, self: PlayerState, readOnly: boolean) {
   }
 }
 
-/** What selling n units at the current price brings in, as the sim prices each unit. */
-function estimate(price: number, base: number, n: number): number {
-  let factor = (price * 1000) / base;
+/** What selling n units at the current price brings in, as the sim prices each unit for this player's tech. */
+function estimate(price: number, base: number, n: number, self: PlayerState): number {
+  let factor = (price * MARKET.full) / base;
+  const drop = has(self, "wholesale") ? TRADE.wholesaleDrop : MARKET.dropPerUnit;
   let total = 0;
   for (let i = 0; i < n; i++) {
-    total += Math.max(1, Math.floor((base * factor) / 1000));
-    factor = Math.max(250, factor - 40);
+    const unit = Math.max(1, Math.floor((base * factor) / MARKET.full));
+    total += has(self, "haggling") ? Math.floor((unit * TRADE.haggle) / 100) : unit;
+    factor = Math.max(MARKET.floor, factor - drop);
   }
   return total;
 }
@@ -378,10 +459,14 @@ function renderContracts(s: FarmState, self: PlayerState, readOnly: boolean) {
       })
       .join(" ");
     el.querySelector<HTMLButtonElement>(".deliver")!.disabled = readOnly || !ready;
+    const guild = has(self, "guild");
+    const reward = guild ? Math.floor((contract.reward * TRADE.guild) / 100) : contract.reward;
+    el.querySelector(".reward")!.textContent = String(reward);
     const worth = [...contract.items].reduce((sum, item) => sum + (s.prices.get(item.crop) ?? 0) * item.count, 0);
     el.dataset.tip =
-      `<b>Order: ${contract.reward} coins</b>` +
-      `<div class="tip-row">Pays ${CONTRACTS.bonus}% of the normal price. Selling the same goods now would bring about ${worth}.</div>` +
+      `<b>Order: ${reward} coins</b>` +
+      `<div class="tip-row">Pays ${CONTRACTS.bonus}% of the normal price${guild ? `, plus ${TRADE.guild - 100}% from the guild` : ""}. ` +
+      `Selling the same goods now would bring about ${worth}.</div>` +
       `<div class="tip-muted">The first farmer to deliver gets it.</div>` +
       (ready ? "" : `<div class="tip-warn">Not enough in your barn yet.</div>`);
     el.querySelector(".left")!.textContent = `${Math.max(0, Math.ceil((contract.expiresAt - s.tick) / TICK_RATE))} s`;
@@ -445,13 +530,13 @@ function actionFor(index: number): Action | null {
   }
   if (t.terrain === "pond" || !bordersMine(index, self.side)) return null;
   if (t.owner === -1) {
-    const price = LAND.base + self.bought * LAND.step + (t.terrain === "rich" ? LAND.rich : 0);
+    const price = landCost(self, t.terrain);
     return { type: "buy", text: `Buy this ${t.terrain === "rich" ? "rich soil" : t.terrain} for ${price} coins` };
   }
   if (t.home || t.building || t.guarded) return null;
   const wait = Math.max(0, (self.ready.get("buyout") ?? 0) - s.tick);
   const note = wait ? ` · ready in ${Math.ceil(wait / TICK_RATE)} s` : "";
-  return { type: "buy", text: `Buy out for ${t.value * BUYOUT.factor} coins (they get ${t.value} back)${note}` };
+  return { type: "buy", text: `Buy out for ${buyoutCost(t)} coins (they get ${t.value} back)${note}` };
 }
 
 function describe(index: number): string {
@@ -496,11 +581,12 @@ function tileTip(index: number): string {
   const row = (text: string, cls = "tip-row") => rows.push(`<div class="${cls}">${text}</div>`);
   if (t.terrain === "pond") row("Can't be bought or planted. Waters the 8 tiles around it.");
   else if (t.terrain === "rock") row(`Clear it for ${LAND.clear} coins before you can plant or build.`);
+  const fert = has([...s.players].find((p) => p.side === t.owner), "fertilizer");
   if (t.crop) {
     const crop = CROPS[t.crop as CropId];
     if (t.growth >= 100) row(`${CROP_ICONS[crop.id]} <b>Ripe ${crop.name.toLowerCase()}</b> · sells for ${s.prices.get(crop.id) ?? crop.price}`);
     else {
-      const left = Math.ceil(((100 - t.growth) / 100) * growSeconds(crop.id, t.terrain, t.wet, t.weeds));
+      const left = Math.ceil(((100 - t.growth) / 100) * growSeconds(crop.id, t.terrain, t.wet, t.weeds, fert));
       row(`${CROP_ICONS[crop.id]} ${crop.name} ${t.growth}% · ripe in about ${left} s`);
     }
   }
@@ -513,10 +599,11 @@ function tileTip(index: number): string {
     if (t.terrain === "rich") factors.push("rich soil ×1.5");
     factors.push(t.wet ? "watered" : "dry ×½");
     if (t.weeds) factors.push("weeds ×½");
-    const speed = rateFor(t.terrain, t.wet, t.weeds) / rateFor("grass", true, false);
+    if (fert) factors.push("fertilizer ×1.25");
+    const speed = rateFor(t.terrain, t.wet, t.weeds, fert) / rateFor("grass", true, false);
     row(`Growth speed ${speed === 1 ? "normal" : `×${speed}`} (${factors.join(", ")})`);
-    const byWell = around(index, 1).some((n) => n !== index && tile(n)?.building === "well");
-    if (t.wet) row(`Watered by ${byWell ? "a well" : "a pond"} next to it.`, "tip-muted");
+    const byWell = around(index, 2).some((n) => n !== index && tile(n)?.building === "well" && around(n, wellReach(tile(n)!.owner)).includes(index));
+    if (t.wet) row(`Watered by ${byWell ? "a well" : "a pond"} nearby.`, "tip-muted");
     else row("Dry: a pond or well next to it would double the speed.", "tip-warn");
     if (t.weeds) row(t.owner === side && self ? "Weeds! Click to pull them." : "Weeds slow this tile down.", "tip-warn");
   }
@@ -528,9 +615,9 @@ function tileTip(index: number): string {
     if (t.home) row(`Starting land, worth ${t.value}. Can't be bought out.`, "tip-muted");
     else if (t.building) row(`Worth ${t.value}. Land with a building can't be bought out.`, "tip-muted");
     else if (t.guarded) row(`Worth ${t.value}. Just bought out, safe for now.`, "tip-muted");
-    else row(`Worth ${t.value}. Buyout price ${t.value * BUYOUT.factor}.`, "tip-muted");
+    else row(`Worth ${t.value}. Buyout price ${buyoutCost(t)}.`, "tip-muted");
   } else if (t.terrain !== "pond" && self) {
-    const price = LAND.base + self.bought * LAND.step + (t.terrain === "rich" ? LAND.rich : 0);
+    const price = landCost(self, t.terrain);
     row(`Costs ${price} coins. You can buy land that touches yours (not diagonally).`, "tip-muted");
   }
   const action = actionFor(index);
@@ -549,7 +636,10 @@ function previewFor(index: number): { tiles: number[]; color: number } | null {
     return { tiles: patch.filter((n) => tile(n)?.owner === 1 - (me()?.side ?? 0)), color: PALETTE.weeds };
   }
   const building = actionFor(index)?.type === "build" ? tool : t.building;
-  if (building === "well") return { tiles: around(index, 1).filter((n) => n !== index && tile(n)?.terrain !== "pond"), color: PALETTE.pond };
+  if (building === "well") {
+    const reach = wellReach(t.building ? t.owner : (me()?.side ?? -1));
+    return { tiles: around(index, reach).filter((n) => n !== index && tile(n)?.terrain !== "pond"), color: PALETTE.pond };
+  }
   if (building === "scarecrow") return { tiles: around(index, CROWS.scarecrowRange), color: PALETTE.wheat };
   return null;
 }
@@ -623,6 +713,10 @@ function onFx(events: Fx[]) {
     } else if (fx.type === "crows") sfx.crows();
     else if (fx.type === "weeds") sfx.weeds();
     else if (fx.type === "dump") sfx.dump();
+    else if (fx.type === "research") {
+      sfx.research();
+      if (!mine && !spectating) toast(`${[...room!.state.players].find((p) => p.side === fx.side)?.name ?? "They"} researched ${TECH[fx.tech].name}`);
+    }
   }
   if (spectating) {
     feed = feed.slice(0, FEED_LENGTH);
@@ -659,6 +753,7 @@ async function enter(join: () => Promise<Room<any, FarmState>>) {
   history = {};
   lastSample = -1;
   contractKey = "";
+  techSide = -1;
   watchSide = 0;
   feed = [];
   delete $("result").dataset.shown;
@@ -710,6 +805,33 @@ function buildPanel() {
     $("sabotage").appendChild(button);
   }
   $("sabotage").classList.add("sabotage");
+
+  $("tech-tabs").innerHTML = [0, 1].map((side) => `<button data-side="${side}"></button>`).join("");
+  for (const tab of $("tech-tabs").children as HTMLCollectionOf<HTMLButtonElement>) tab.onclick = () => openTech(Number(tab.dataset.side));
+  $("tech-tree").innerHTML = BRANCH_IDS.map(
+    (branch) =>
+      `<div class="tech-branch"><h2>${BRANCHES[branch]}</h2>` +
+      TECH_IDS.filter((id) => TECH[id].branch === branch)
+        .map(
+          (id) =>
+            `<div class="tech-node" data-tech="${id}"><div class="tech-name">${TECH[id].name}</div>` +
+            `<div class="tech-text">${TECH[id].text}</div><div class="tech-state"></div>` +
+            `<button class="research">Research · ${TECH[id].cost}</button></div>`,
+        )
+        .join("") +
+      "</div>",
+  ).join("");
+  for (const node of $("tech-tree").querySelectorAll<HTMLElement>(".tech-node")) {
+    node.querySelector<HTMLButtonElement>("button")!.onclick = () => room?.send("research", { id: node.dataset.tech });
+  }
+  $("tech-close").onclick = () => openTech(-1);
+  $("tech-open").onclick = () => openTech(viewed()?.side ?? 0);
+  for (const badge of document.querySelectorAll<HTMLButtonElement>(".tech-badge")) {
+    badge.onclick = (e) => {
+      e.stopPropagation();
+      openTech(Number(badge.dataset.side));
+    };
+  }
 }
 
 function main() {
@@ -724,6 +846,11 @@ function main() {
   window.addEventListener("mousemove", (e) => {
     mouse = { x: e.clientX, y: e.clientY };
     tipTarget = e.target instanceof Element ? e.target.closest<HTMLElement>("[data-tip]") : null;
+    // The tech tree covers the board; the tile under it isn't hovered.
+    if (hovered !== -1 && e.target instanceof Element && e.target.closest("#tech")) {
+      hovered = -1;
+      updateHint();
+    }
     refreshTip();
   });
   buildPanel();
@@ -741,7 +868,11 @@ function main() {
     muteLabel();
   };
   window.addEventListener("keydown", (e) => {
-    if (room?.state.phase !== "playing" || e.target instanceof HTMLInputElement) return;
+    if (!room || room.state.phase === "lobby" || e.target instanceof HTMLInputElement) return;
+    // Anyone, spectators included, can open the tech trees, even after the match.
+    if (e.key.toLowerCase() === "t") return openTech(techSide === -1 ? (viewed()?.side ?? 0) : -1);
+    if (e.key === "Escape" && techSide !== -1) return openTech(-1);
+    if (room.state.phase !== "playing") return;
     const n = Number(e.key);
     if (n >= 1 && n <= TOOLS.length) selectTool(TOOLS[n - 1]);
     else if (e.key === "Escape") aim(false);
@@ -802,6 +933,9 @@ main();
   },
   get tiles() {
     return [...(room?.state.tiles ?? [])].map((t) => ({ owner: t.owner, terrain: t.terrain, crop: t.crop, growth: t.growth, weeds: t.weeds }));
+  },
+  get tech() {
+    return TECH_IDS.filter((id) => has(me(), id));
   },
   get winner() {
     return room?.state.winner ?? -1;

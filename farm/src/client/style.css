@@ -535,6 +535,157 @@ button.primary {
   font-size: 18px;
 }
 
+.tech-badge {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+}
+
+.tech-badge.open {
+  border-color: var(--leaf);
+  box-shadow: 0 0 0 2px var(--leaf);
+}
+
+.tech-open {
+  width: 100%;
+  font-size: 13px;
+}
+
+.tech-open.ready {
+  border-color: var(--leaf);
+  color: var(--leaf);
+  font-weight: 600;
+}
+
+#hud .tech {
+  pointer-events: auto;
+  left: calc((100% - 336px) / 2 + 8px);
+  width: 640px;
+  max-width: calc(100% - 360px);
+  padding: 20px;
+}
+
+.tech-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tech-head h1 {
+  flex: 1;
+  font-size: 20px;
+}
+
+.tech-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.tech-tabs button,
+.tech-close {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.tech-tabs button.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+  font-weight: 600;
+}
+
+.tech-tabs button.enemy.selected {
+  border-color: var(--enemy);
+  box-shadow: 0 0 0 2px var(--enemy);
+}
+
+.tech-tree {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.tech-branch {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.tech-branch h2 {
+  margin: 0 0 -8px;
+  text-align: center;
+}
+
+.tech-node {
+  position: relative;
+  min-height: 112px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #fffaf0;
+  border: 2px solid #c9b48a;
+  border-radius: 10px;
+}
+
+/* The line to the tech above, which has to come first. */
+.tech-node + .tech-node::before {
+  content: "";
+  position: absolute;
+  top: -20px;
+  left: calc(50% - 2px);
+  width: 4px;
+  height: 18px;
+  background: #c9b48a;
+}
+
+.tech-node.done {
+  background: #e3f0d6;
+  border-color: var(--leaf);
+}
+
+.tech-node.done + .tech-node::before {
+  background: var(--leaf);
+}
+
+.tech-node.locked {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.tech-name {
+  font-weight: 700;
+}
+
+.tech-text {
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.tech-state {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tech-node.done .tech-state {
+  color: var(--leaf);
+  font-weight: 600;
+}
+
+.tech-node .research {
+  padding: 4px 8px;
+  font-size: 12px;
+  background: var(--leaf);
+  border-color: var(--leaf);
+  color: white;
+  font-weight: 600;
+}
+
+#tech-note {
+  font-size: 12px;
+}
+
 #barn-size.full {
   color: var(--danger);
   font-weight: 700;
