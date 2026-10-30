@@ -1,6 +1,6 @@
 // Small synthesized sound effects; no audio files needed.
 let ctx: AudioContext | null = null;
-let master: GainNode | null = null;
+let out: AudioNode | null = null;
 let muted = localStorage.getItem("lanes.muted") === "1";
 /** Last time (in AudioContext seconds) each throttled sound played. */
 const lastPlayed = new Map<string, number>();
@@ -9,9 +9,12 @@ function audio(): AudioContext | null {
   if (muted) return null;
   if (!ctx) {
     ctx = new AudioContext();
-    master = ctx.createGain();
+    // A compressor keeps many overlapping hits from clipping.
+    const comp = ctx.createDynamicsCompressor();
+    const master = ctx.createGain();
     master.gain.value = 0.6;
-    master.connect(ctx.destination);
+    comp.connect(master).connect(ctx.destination);
+    out = comp;
   }
   if (ctx.state === "suspended") void ctx.resume();
   return ctx;
@@ -49,7 +52,7 @@ function tone(freq: number, duration: number, volume: number, type: OscillatorTy
   gain.gain.setValueAtTime(0.0001, t);
   gain.gain.exponentialRampToValueAtTime(volume, t + 0.005);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
-  osc.connect(gain).connect(master!);
+  osc.connect(gain).connect(out!);
   osc.start(t);
   osc.stop(t + duration + 0.02);
 }
@@ -69,7 +72,7 @@ function noise(duration: number, volume: number, filterFreq: number, q = 1, type
   filter.Q.value = q;
   const gain = a.createGain();
   gain.gain.value = volume;
-  src.connect(filter).connect(gain).connect(master!);
+  src.connect(filter).connect(gain).connect(out!);
   src.start(t);
 }
 
@@ -99,10 +102,11 @@ export const sfx = {
     if (!throttle("heal", 0.25)) return;
     tone(vary(880), 0.12, 0.04, "sine", 0, 1320);
   },
-  death() {
+  /** `mine` is true when one of the local player's units died. */
+  death(mine: boolean) {
     if (!throttle("death", 0.1)) return;
     noise(0.12, 0.25, vary(700), 0.9);
-    tone(vary(320), 0.14, 0.06, "triangle", 0, 90);
+    tone(vary(mine ? 320 : 420), 0.14, 0.06, "triangle", 0, mine ? 90 : 150);
   },
   /** `mine` is true when the local player's base was hit. */
   breach(mine: boolean) {
@@ -139,6 +143,10 @@ export const sfx = {
   wave() {
     tone(196, 0.18, 0.1, "sawtooth");
     tone(294, 0.25, 0.1, "sawtooth", 0.12);
+  },
+  /** Last seconds before a wave. */
+  tick() {
+    tone(1000, 0.04, 0.04, "sine");
   },
   place() {
     tone(330, 0.07, 0.12, "square", 0, 220);

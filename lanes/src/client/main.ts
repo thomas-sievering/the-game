@@ -25,7 +25,7 @@ let draft: string[] | null = null;
 /** Own pad picked for selling, or -1. */
 let selectedCell = -1;
 /** What the last state showed, to play sounds for changes the server made. */
-let heard = { levels: [] as number[], income: 0, tick: 0, phase: "" };
+let heard = { levels: [] as number[], income: 0, tick: -1, phase: "" };
 
 function show(screen: "home" | "deck" | "lobby" | "game") {
   $("home").classList.toggle("hidden", screen !== "home");
@@ -295,7 +295,7 @@ function playFx(events: Fx[]) {
       else if (fx.ranged) sfx.shot();
       else sfx.melee();
     } else if (fx.type === "heal") sfx.heal();
-    else if (fx.type === "death") sfx.death();
+    else if (fx.type === "death") sfx.death(fx.side === renderer.mySide);
     else if (fx.type === "breach") sfx.breach(fx.side !== renderer.mySide);
     else if (fx.type === "spell") sfx.spell(fx.card);
     else if (fx.type === "shrine" && fx.owner !== -1) sfx.shrine(fx.owner === renderer.mySide);
@@ -306,7 +306,8 @@ function playFx(events: Fx[]) {
 function playStateSounds(s: LanesState, self: PlayerState | undefined) {
   const levels = [...(self?.levels ?? [])];
   const income = self?.income ?? 0;
-  if (heard.phase === "playing") {
+  // The first render of a match (or after rejoining) only records the state.
+  if (heard.phase === "playing" && s.tick >= heard.tick) {
     for (let cell = 0; cell < levels.length; cell++) {
       const before = heard.levels[cell] ?? 0;
       if (levels[cell] > before) before === 0 ? sfx.place() : sfx.levelUp(levels[cell]);
@@ -314,6 +315,11 @@ function playStateSounds(s: LanesState, self: PlayerState | undefined) {
     }
     if (income > heard.income) sfx.invest();
     if (Math.floor(s.tick / WAVE_TICKS) > Math.floor(heard.tick / WAVE_TICKS)) sfx.wave();
+    else if (s.phase === "playing" && s.tick > heard.tick) {
+      const secondsLeft = (t: number) => Math.ceil((WAVE_TICKS - (t % WAVE_TICKS)) / TICK_RATE);
+      const left = secondsLeft(s.tick);
+      if (left <= 3 && left < secondsLeft(heard.tick)) sfx.tick();
+    }
     if (s.phase === "finished") {
       if (s.winner === self?.side) sfx.win();
       else if (self && s.winner !== DRAW) sfx.lose();
@@ -332,6 +338,7 @@ function useSlot(slot: number) {
     room.send("play", { hand: slot });
   } else {
     select(selected === slot ? -1 : slot);
+    sfx.select();
   }
 }
 
@@ -372,6 +379,7 @@ async function enter(join: () => Promise<Room<any, LanesState>>) {
   });
   room.onLeave(() => {
     room = null;
+    heard = { levels: [], income: 0, tick: -1, phase: "" };
     select(-1);
     selectPad(-1);
     render();
