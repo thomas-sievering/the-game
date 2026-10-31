@@ -119,6 +119,47 @@ describe("bumpers", () => {
   });
 });
 
+describe("ice", () => {
+  it("lets the ball glide much further than on carpet", () => {
+    const grass = solo(box(), 100, 200, [60, 0]);
+    const ice = solo(box([{ type: "ice", points: [[0, 0], [1000, 0], [1000, 400], [0, 400]] }]), 100, 200, [60, 0]);
+    expect(ice.balls[0].x - 100).toBeGreaterThan((grass.balls[0].x - 100) * 2);
+  });
+});
+
+describe("boost pads", () => {
+  const pad: Zone = { type: "boost", points: [[300, 150], [360, 150], [360, 250], [300, 250]], velocity: [0, 600] };
+
+  it("turns a ball onto its arrow and speeds it up", () => {
+    const r = solo(box([pad]), 100, 200, [aimForDistance(260), 0]);
+    expect(r.events.some((e) => e.type === "boost")).toBe(true);
+    // It would have stopped near x=360; instead it is flung down to the bottom wall.
+    expect(r.balls[0].y).toBeGreaterThan(300);
+    expect(r.events.some((e) => e.type === "wall")).toBe(true);
+  });
+});
+
+describe("portals", () => {
+  const hole: Hole = { ...box(), portals: [{ a: [300, 200], b: [700, 100] }] };
+
+  it("carries the ball to the other end at the same velocity", () => {
+    const r = solo(hole, 100, 200, [aimForDistance(300), 0]);
+    const jump = r.events.find((e) => e.type === "portal");
+    expect(jump).toMatchObject({ x: 700, y: 100, index: 0 });
+    expect(r.balls[0].x).toBeGreaterThan(700);
+    expect(r.balls[0].y).toBe(100);
+  });
+
+  it("does not bounce straight back through a ball resting on an end", () => {
+    // Starting on an end does not teleport; rolling off and back on later does.
+    const r = solo(hole, 700, 100, [aimForDistance(60), 0]);
+    expect(r.events.some((e) => e.type === "portal")).toBe(false);
+    const back = solo(hole, 760, 100, [-aimForDistance(120), 0]);
+    expect(back.events.filter((e) => e.type === "portal")).toHaveLength(1);
+    expect(back.balls[0].x).toBeLessThan(300);
+  });
+});
+
 describe("moving obstacles", () => {
   const slider: Mover = { type: "slider", points: [[480, 100], [520, 100], [520, 300], [480, 300]], path: [0, 60], period: 2 };
   const spinner: Mover = { type: "spinner", center: [500, 200], length: 80, width: 12, arms: 2, period: 2 };

@@ -2,7 +2,7 @@
 // Use only + - * / and Math.sqrt on non-integers, and keep iteration order stable.
 // The RNG uses integer % on values below 2^53, which is exact.
 
-import { CARDS, SIZE, type SpellCard, STARTER_DECK, unitCard } from "./cards";
+import { CARDS, SIZE, type SpellCard, STARTER_DECK, type UnitCard, canHit, unitCard } from "./cards";
 
 export const TICK_RATE = 20;
 export const FIELD_WIDTH = 1200;
@@ -21,6 +21,8 @@ export const START_GOLD = 100;
 export const START_INCOME = 4;
 export const INVEST_COST = 75;
 export const INVEST_COST_STEP = 25;
+/** Gold to swap a hand card for the next one; the discarded card goes to the bottom of the draw pile. */
+export const DISCARD_COST = 15;
 /** How far away a unit notices enemies and leaves its row to fight them. */
 export const AGGRO_RANGE = 170;
 /** Each column closer to the field spawns this much further forward. */
@@ -109,8 +111,8 @@ export interface Player {
 }
 
 export type Fx =
-  /** `id` is the attacker, or 0 for a base turret. */
-  | { type: "hit"; id: number; side: Side; x: number; y: number; tx: number; ty: number; ranged: boolean; splash: number }
+  /** `id` is the attacker, or 0 for a base turret or tower; `air` when the target flies. */
+  | { type: "hit"; id: number; side: Side; x: number; y: number; tx: number; ty: number; ranged: boolean; splash: number; air: boolean }
   | { type: "heal"; x: number; y: number; tx: number; ty: number }
   | { type: "death"; id: number; side: Side; x: number; y: number }
   | { type: "breach"; side: Side; x: number; y: number; damage: number }
@@ -287,6 +289,22 @@ export function play(battle: Battle, side: Side, handIndex: number, cell?: numbe
     player.discard.push(card.id);
     player.hand[handIndex] = draw(battle, player);
   }
+  return null;
+}
+
+/** Pays DISCARD_COST to swap a hand card for the next one, putting it at the bottom of the draw pile. Returns an error message or null. */
+export function discard(battle: Battle, side: Side, handIndex: number): string | null {
+  if (battle.winner !== -1) return "The match is over";
+  const player = battle.players[side];
+  const card = player.hand[handIndex];
+  if (!Number.isInteger(handIndex) || !card) return "No card in that slot";
+  if (player.gold < DISCARD_COST) return "Not enough gold";
+  // Draw before putting the card back so it can't come straight back from an empty pile.
+  const next = draw(battle, player);
+  if (!next) return "No other card to draw";
+  player.gold -= DISCARD_COST;
+  player.hand[handIndex] = next;
+  player.deck.unshift(card);
   return null;
 }
 
@@ -501,7 +519,7 @@ export function step(battle: Battle): void {
 function contestShrine(battle: Battle): void {
   const present = [false, false];
   for (const unit of battle.units) {
-    if (unit.hp <= 0) continue;
+    if (unit.hp <= 0 || unitCard(unit.card).flying) continue;
     const dx = unit.x - SHRINE.x;
     const dy = unit.y - SHRINE.y;
     if (dx * dx + dy * dy <= SHRINE.radius * SHRINE.radius) present[unit.side] = true;
@@ -526,7 +544,10 @@ function separate(battle: Battle): void {
     for (let j = i + 1; j < units.length; j++) {
       const b = units[j];
       if (b.side !== a.side || b.hp <= 0) continue;
-      const min = SIZE[unitCard(a.card).role] + SIZE[unitCard(b.card).role];
+      const [ca, cb] = [unitCard(a.card), unitCard(b.card)];
+      // Fliers pass over ground units; only pieces on the same layer crowd each other.
+      if (!ca.flying !== !cb.flying) continue;
+      const min = SIZE[ca.role] + SIZE[cb.role];
       const dx = b.x - a.x;
       let dy = b.y - a.y;
       const d2 = dx * dx + dy * dy;
@@ -565,7 +586,7 @@ function fireTurret(battle: Battle, side: Side): void {
   if (!target) return;
   target.hp -= battle.tick < TURRET_EARLY_TICKS ? TURRET.earlyDamage : TURRET.damage;
   player.turretCooldown = TURRET.attackTicks;
-  battle.events.push({ type: "hit", id: 0, side, x: baseX, y: target.y, tx: target.x, ty: target.y, ranged: true, splash: 0 });
+  battle.events.push({ type: "hit", id: 0, side, x: baseX, y: target.y, tx: target.x, ty: target.y, ranged: true, splash: 0, air: !!unitCard(target.card).flying });
 }
 
 function fireTowers(battle: Battle, side: Side): void {
@@ -590,7 +611,7 @@ function fireTowers(battle: Battle, side: Side): void {
     if (!target) continue;
     target.hp -= TOWER.damage;
     tower.cooldown = TOWER.attackTicks;
-    battle.events.push({ type: "hit", id: 0, side, x: tower.x, y: tower.y, tx: target.x, ty: target.y, ranged: true, splash: 0 });
+    battle.events.push({ type: "hit", id: 0, side, x: tower.x, y: tower.y, tx: target.x, ty: target.y, ranged: true, splash: 0, air: !!unitCard(target.card).flying });
   }
 }
 
@@ -638,14 +659,14 @@ function act(battle: Battle, unit: Unit): void {
     } else if (unit.cooldown === 0) {
       unit.cooldown = card.attackTicks;
       const splash = card.splash ?? 0;
-      for (const other of splash ? enemyTargets(battle, unit.side) : [target]) {
+      for (const other of splash ? enemyTargets(battle, unit.side, card) : [target]) {
         const sx = other.x - target.x;
         const sy = other.y - target.y;
         if (other !== target && sx * sx + sy * sy > splash * splash) continue;
         // Slayers hit units of a higher tier harder.
         other.hp -= card.slayer && "card" in other && unitCard(other.card).tier > card.tier ? damage * card.slayer : damage;
       }
-      battle.events.push({ type: "hit", id: unit.id, side: unit.side, x: unit.x, y: unit.y, tx: target.x, ty: target.y, ranged: card.range > 40, splash });
+      battle.events.push({ type: "hit", id: unit.id, side: unit.side, x: unit.x, y: unit.y, tx: target.x, ty: target.y, ranged: card.range > 40 || splash > 0, splash, air: "card" in target && !!unitCard(target.card).flying });
     }
     return;
   }
@@ -664,9 +685,10 @@ function act(battle: Battle, unit: Unit): void {
   battle.events.push({ type: "breach", side: unit.side, x: baseX, y: unit.y, damage: breach });
 }
 
-/** Living enemy units, then the enemy's standing towers. */
-function enemyTargets(battle: Battle, side: Side): Target[] {
-  const targets: Target[] = battle.units.filter((u) => u.side !== side && u.hp > 0);
+/** Living enemy units the attacker can hit, then the enemy's standing towers if it can hit the ground. */
+function enemyTargets(battle: Battle, side: Side, attacker: UnitCard): Target[] {
+  const targets: Target[] = battle.units.filter((u) => u.side !== side && u.hp > 0 && canHit(attacker, !!unitCard(u.card).flying));
+  if (!canHit(attacker, false)) return targets;
   for (const tower of battle.players[side === 0 ? 1 : 0].towers) if (tower.standing && tower.hp > 0) targets.push(tower);
   return targets;
 }
@@ -675,7 +697,7 @@ function enemyTargets(battle: Battle, side: Side): Target[] {
 function nearestEnemy(battle: Battle, unit: Unit, range: number): Target | null {
   let best: Target | null = null;
   let bestDist = range * range;
-  for (const other of enemyTargets(battle, unit.side)) {
+  for (const other of enemyTargets(battle, unit.side, unitCard(unit.card))) {
     const dx = other.x - unit.x;
     const dy = other.y - unit.y;
     const dist = dx * dx + dy * dy;

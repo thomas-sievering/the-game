@@ -308,4 +308,27 @@ test("a new unit takes the field and new spells show their tier and casts left",
   if (hand.includes("cataclysm")) await expect(alice.locator(".hand-card", { hasText: "Cataclysm" }).first()).toContainText("3/3 left");
   for (const id of hand) if (CARDS[id].tier > 1) await expect(alice.locator(".hand-card", { hasText: CARDS[id].name }).first()).toContainText("Tier");
   await alice.screenshot({ path: shots("new-2-hand") });
+
+  // Discarding a locked card swaps it for the next one and sends it to the bottom of the deck. Cards with a single
+  // copy in the deck can't be back in hand right after, so cycle with Shift+1 until one shows up, then discard it.
+  const singles = ["wolfrider", "repair", "quake"];
+  let discarded = false;
+  for (let i = 0; i < 8 && !discarded; i++) {
+    await expect.poll(() => lanes(alice, (l) => l.gold), { timeout: 15_000 }).toBeGreaterThanOrEqual(15);
+    const now = await lanes(alice, (l) => l.hand);
+    const slot = now.findIndex((id) => singles.includes(id));
+    if (slot === -1) {
+      await alice.keyboard.press("Shift+1");
+      await alice.waitForTimeout(300);
+      continue;
+    }
+    const card = alice.locator("#hand .hand-card").nth(slot);
+    await card.hover();
+    await expect(card.locator(".discard")).toBeVisible();
+    await alice.screenshot({ path: shots("new-3-discard") });
+    await card.locator(".discard").click();
+    await expect.poll(() => lanes(alice, (l) => l.hand)).not.toContain(now[slot]);
+    discarded = true;
+  }
+  expect(discarded).toBe(true);
 });

@@ -1,7 +1,7 @@
 import { Application, Container, Graphics, Rectangle, Text } from "pixi.js";
 import { CARDS } from "../shared/cards";
 import { COLS, FIELD_HEIGHT, FIELD_WIDTH, type Fx, MAX_LEVEL, MAX_TIER, ROW_HEIGHT, ROWS, SHRINE, TOWER, padOpen, rowCenter } from "../shared/sim";
-import { TABLE, drawMini, drawSpellIcon, miniHeight, miniRadius, mix, shade } from "./minis";
+import { TABLE, drawMini, drawSpellIcon, drawStand, isFlier, miniHeight, miniRadius, mix, shade } from "./minis";
 
 export const PALETTE = {
   table: 0x4a2f1c,
@@ -41,6 +41,13 @@ export const PALETTE = {
 const LEVEL_SIZE = [1, 1.15, 1.32];
 /** Miniatures are drawn larger than their body radius so they read at board scale. */
 const MINI_SCALE = 1.4;
+/** How high fliers hover above their shadow. */
+const FLY_HEIGHT = 34;
+
+/** Height above the board a piece of this card is drawn at. */
+function flyLift(cardId: string): number {
+  return isFlier(cardId) ? FLY_HEIGHT : 0;
+}
 
 export interface UnitView {
   id: number;
@@ -94,6 +101,8 @@ interface Fallen {
   y: number;
   r: number;
   age: number;
+  /** Height it fell from, for fliers. */
+  lift: number;
 }
 
 interface ActiveFx {
@@ -310,7 +319,7 @@ export class Renderer {
         const attacker = this.shown.get(fx.id);
         if (attacker) {
           const dx = this.vx(fx.tx) - this.vx(fx.x);
-          const dy = fx.ty - fx.y;
+          const dy = fx.ty - fx.y + flyLift(attacker.card) - (fx.air ? FLY_HEIGHT : 0);
           const d = Math.hypot(dx, dy) || 1;
           Object.assign(attacker, { lunge: LUNGE_SECONDS, lungeX: dx / d, lungeY: dy / d });
         }
@@ -320,11 +329,11 @@ export class Renderer {
         if (victim && !victim.dead) {
           victim.dead = true;
           if (victim.hp > 0) {
-            this.float(`-${victim.hp}`, victim.x, victim.y - miniHeight(victim.card, miniRadius(victim.card)) - 6, 0xffffff, 15);
+            this.float(`-${victim.hp}`, victim.x, victim.y - flyLift(victim.card) - miniHeight(victim.card, miniRadius(victim.card)) - 6, 0xffffff, 15);
             victim.hp = 0;
           }
           const r = miniRadius(victim.card) * MINI_SCALE * (LEVEL_SIZE[victim.level - 1] ?? 1);
-          this.fallen.push({ card: victim.card, side: victim.side, x: victim.x, y: victim.y, r, age: 0 });
+          this.fallen.push({ card: victim.card, side: victim.side, x: victim.x, y: victim.y, r, age: 0, lift: flyLift(victim.card) });
         }
       } else if (fx.type === "breach") {
         const victim = fx.side === 0 ? 1 : 0;
@@ -361,7 +370,7 @@ export class Renderer {
     if (card?.kind === "unit") {
       const r = Math.max(18, Math.min(24, miniRadius(cardId) * 1.3));
       const spots = cardId === "swarm" ? [[-32, 2], [0, -8], [32, 2]] : [[0, 0]];
-      for (const [dx, dy] of spots) this.drawPiece(g, cardId, w / 2 + dx, h - 14 + dy, cardId === "swarm" ? r * 0.75 : r, 1, { paint: PALETTE.me, time: 0.3 });
+      for (const [dx, dy] of spots) this.drawPiece(g, cardId, w / 2 + dx, h - 14 + dy, cardId === "swarm" ? r * 0.75 : r, 1, { paint: PALETTE.me, time: 0.3 }, 0, isFlier(cardId) ? 6 : 0);
     } else {
       g.translateTransform(w / 2, h / 2);
       drawSpellIcon(g, cardId, 26);
@@ -420,11 +429,16 @@ export class Renderer {
   /** A miniature with its shadow, base centred on (x, y), facing `f`, tipped over by `tilt` radians. */
   private drawPiece(g: Graphics, card: string, x: number, y: number, r: number, f: number, style: Parameters<typeof drawMini>[3], tilt = 0, lift = 0): void {
     const alpha = style.alpha ?? 1;
-    g.ellipse(x + 3, y + 5, r * (1.05 - lift / 40), r * (0.5 - lift / 80)).fill({ color: 0x000000, alpha: 0.28 * alpha });
+    const flier = isFlier(card);
+    // A dropping piece's shadow shrinks with height; a flier's stays by its stand, cast slightly aside.
+    const k = flier ? 0.8 : Math.max(0.2, 1 - lift / 40);
+    g.ellipse(x + 3 + (flier ? lift * 0.2 : 0), y + 5, r * 1.05 * k, r * 0.5 * k).fill({ color: 0x000000, alpha: 0.28 * alpha });
     g.save();
     g.scaleTransform(f, 1);
     g.rotateTransform(tilt * f);
-    g.translateTransform(x, y - lift);
+    g.translateTransform(x, y);
+    if (flier) drawStand(g, r, lift, style);
+    g.translateTransform(0, -lift);
     drawMini(g, card, r, style);
     g.restore();
   }
@@ -481,7 +495,7 @@ export class Renderer {
           g.roundRect(cardX + 4, cardY + 4, cardW - 8, cardH - 26, 4).fill({ color: mix(PALETTE.felt[0], color, 0.18), alpha });
           const rim = shownLevel > 1 ? rankColor(shownLevel) : undefined;
           const r = Math.max(15, Math.min(19, miniRadius(shown) * 1.2)) * (LEVEL_SIZE[shownLevel - 1] ?? 1) * 0.92;
-          this.drawPiece(g, shown, cx, cardY + cardH - 30, r, board === 0 ? 1 : -1, { paint: color, alpha, rim });
+          this.drawPiece(g, shown, cx, cardY + cardH - 30, r, board === 0 ? 1 : -1, { paint: color, alpha, rim }, 0, isFlier(shown) ? 6 : 0);
           if (shownLevel > 1 && !preview) g.roundRect(cardX, cardY, cardW, cardH, 6).stroke({ color: rankColor(shownLevel), width: 3 });
           if (shownLevel > 1) drawRank(g, x + PAD_SIZE - 16, y + 16, shownLevel, preview ? 0.7 : 1);
         } else {
@@ -510,8 +524,8 @@ export class Renderer {
     const g = this.units.clear();
     const blend = 1 - Math.exp(-SMOOTHING * dt);
     const seen = new Set<number>();
-    // Pieces nearer the bottom of the board stand in front.
-    const ordered = [...this.latest].sort((a, b) => a.y - b.y || a.id - b.id);
+    // Fliers pass over everything; otherwise pieces nearer the bottom of the board stand in front.
+    const ordered = [...this.latest].sort((a, b) => flyLift(a.card) - flyLift(b.card) || a.y - b.y || a.id - b.id);
     for (const u of ordered) {
       seen.add(u.id);
       const vx = this.vx(u.x);
@@ -529,9 +543,9 @@ export class Renderer {
       if (step > 0.4 && !u.frozen) s.walk += dt;
       if (u.hp < s.hp) {
         s.flash = FLASH_SECONDS;
-        this.float(`-${s.hp - u.hp}`, s.x, s.y - miniHeight(u.card, miniRadius(u.card)) - 6, 0xffffff, 15);
+        this.float(`-${s.hp - u.hp}`, s.x, s.y - flyLift(u.card) - miniHeight(u.card, miniRadius(u.card)) - 6, 0xffffff, 15);
       } else if (u.hp > s.hp) {
-        this.float(`+${u.hp - s.hp}`, s.x, s.y - miniHeight(u.card, miniRadius(u.card)) - 6, PALETTE.heal, 15);
+        this.float(`+${u.hp - s.hp}`, s.x, s.y - flyLift(u.card) - miniHeight(u.card, miniRadius(u.card)) - 6, PALETTE.heal, 15);
       }
       s.hp = u.hp;
       s.flash = Math.max(0, s.flash - dt);
@@ -543,8 +557,12 @@ export class Renderer {
       const grow = Math.min(1, s.age / SPAWN_SECONDS);
       const r = miniRadius(u.card) * MINI_SCALE * (LEVEL_SIZE[u.level - 1] ?? 1) * (0.6 + 0.4 * grow);
       // Pieces drop onto the board when they spawn, then hop along as they walk.
-      const hop = step > 0.4 && !u.frozen ? Math.abs(Math.sin(s.walk * 11 + u.id)) * 3.5 : 0;
-      const lift = (1 - grow) * 24 + hop;
+      // Fliers bob gently instead, high above their shadow.
+      const flying = flyLift(u.card);
+      const hop = flying
+        ? (u.frozen ? 0 : Math.sin(this.time * 4 + u.id) * 3)
+        : step > 0.4 && !u.frozen ? Math.abs(Math.sin(s.walk * 11 + u.id)) * 3.5 : 0;
+      const lift = (1 - grow) * 24 + flying + hop;
       const color = this.color(u.side);
       const f = this.facing(u.side);
 
@@ -588,7 +606,8 @@ export class Renderer {
       const tip = Math.min(1, p.age / 0.25);
       const alpha = Math.min(1, 2.5 * (1 - p.age / FALL_SECONDS));
       const f = this.facing(p.side);
-      this.drawPiece(g, p.card, p.x, p.y, p.r, f, { paint: shade(this.color(p.side), 0.8), alpha }, -(Math.PI / 2) * tip * tip);
+      // Fliers drop out of the air as they tip.
+      this.drawPiece(g, p.card, p.x, p.y, p.r, f, { paint: shade(this.color(p.side), 0.8), alpha }, -(Math.PI / 2) * tip * tip, p.lift * (1 - tip * tip));
     }
   }
 
@@ -600,7 +619,7 @@ export class Renderer {
       const alpha = 1 - t;
       if (fx.type === "hit") {
         const [x, tx] = [this.vx(fx.x), this.vx(fx.tx)];
-        const [y, ty] = [fx.y - 16, fx.ty - 12];
+        const [y, ty] = [fx.y - 16 - flyLift(by), fx.ty - 12 - (fx.air ? FLY_HEIGHT : 0)];
         if (fx.ranged) {
           // The projectile flies for the first 40% of the effect, then the impact shows.
           const f = Math.min(1, t / 0.4);
@@ -674,6 +693,19 @@ export class Renderer {
     const d = Math.hypot(tx - x, ty - y) || 1;
     const [dx, dy] = [(tx - x) / d, (ty - y) / d];
     const px = x + (tx - x) * f;
+    if (by === "balloon") {
+      // Dropped straight down, speeding up as it falls.
+      const py = y + (ty - y) * f * f;
+      g.circle(px, py, 5).fill(TABLE.bomb).stroke({ color: TABLE.ink, width: 1.5 });
+      g.circle(px + 3, py - 5, 2.5).fill(TABLE.spark);
+      return;
+    }
+    if (by === "drake") {
+      // A fireball with a fading tail.
+      const py = y + (ty - y) * f;
+      for (let i = 3; i >= 0; i--) g.circle(px - dx * i * 7, py - dy * i * 7, 7 - i * 1.4).fill({ color: i ? 0xff9a3c : 0xffe0a0, alpha: 1 - i * 0.22 });
+      return;
+    }
     if (by === "bomber" || by === "catapult") {
       const py = y + (ty - y) * f - Math.sin(Math.PI * f) * d * 0.3;
       const size = by === "catapult" ? 8 : 5;

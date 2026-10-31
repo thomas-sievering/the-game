@@ -1,7 +1,7 @@
 import "./style.css";
 import { Client, type Room } from "@colyseus/sdk";
 import { CARDS, type Card, DECK_SIZE, MAX_COPIES, STARTER_DECK, deckError } from "../shared/cards";
-import { BASE_HP, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, MAX_LEVEL, MAX_TIER, RESEARCH, SHRINE, TICK_RATE, WAVE_TICKS, sellValue } from "../shared/sim";
+import { BASE_HP, DISCARD_COST, DRAW, type Fx, HAND_SIZE, MATCH_TICKS, MAX_LEVEL, MAX_TIER, RESEARCH, SHRINE, TICK_RATE, WAVE_TICKS, sellValue } from "../shared/sim";
 import { LanesState, type PlayerState } from "../shared/state";
 import { isMuted, sfx, toggleMute } from "./audio";
 import { type Board, Renderer } from "./render";
@@ -253,6 +253,7 @@ function cardHtml(card: Card, slot: number | null, cooldown: number, locked: boo
     `<span class="cost">${card.cost}</span><span class="tier t${card.tier}" title="Tier ${card.tier}">${ROMAN[card.tier]}</span>` +
     (slot === null ? "" : `<span class="key">${slot + 1}</span>`) +
     (locked ? `<span class="locked">🔒 Tier ${ROMAN[card.tier]}</span>` : "") +
+    (slot === null ? "" : `<span class="discard" title="Discard for ${DISCARD_COST} gold and draw the next card · Shortcut: Shift+${slot + 1}">✕ ${DISCARD_COST}</span>`) +
     `<span class="art"><span class="mini" style="background-image: url('${renderer.cardArt(card.id)}')"></span></span>`;
   if (card.kind === "spell") {
     return (
@@ -356,6 +357,13 @@ function playStateSounds(s: LanesState, self: PlayerState | undefined) {
   heard = { levels, income, tier, tick: s.tick, phase: s.phase };
 }
 
+/** Pays to swap a hand card for the next one. */
+function discardSlot(slot: number) {
+  if (!room || room.state.phase !== "playing" || !me()?.hand[slot]) return;
+  if (selected === slot) select(-1);
+  room.send("discard", { hand: slot });
+}
+
 /** Clicking a unit card arms it for placement; clicking a spell casts it. */
 function useSlot(slot: number) {
   const card = CARDS[me()?.hand[slot] ?? ""];
@@ -441,7 +449,7 @@ function main() {
   for (let i = 0; i < HAND_SIZE; i++) {
     const button = document.createElement("button");
     button.className = "hand-card";
-    button.onclick = () => useSlot(i);
+    button.onclick = (e) => ((e.target as Element).closest(".discard") ? discardSlot(i) : useSlot(i));
     $("hand").appendChild(button);
   }
   $("invest").onclick = () => room?.send("invest");
@@ -449,7 +457,10 @@ function main() {
   window.addEventListener("keydown", (e) => {
     if (draft && e.key === "Escape") return closeDeck(false);
     if (room?.state.phase !== "playing" || e.target instanceof HTMLInputElement) return;
-    if (e.key >= "1" && e.key <= String(HAND_SIZE)) useSlot(Number(e.key) - 1);
+    // e.code, because Shift turns the digit keys into symbols.
+    const digit = /^Digit(\d)$/.exec(e.code)?.[1];
+    if (e.shiftKey && digit && digit >= "1" && digit <= String(HAND_SIZE)) discardSlot(Number(digit) - 1);
+    else if (e.key >= "1" && e.key <= String(HAND_SIZE)) useSlot(Number(e.key) - 1);
     else if (e.key === "Escape") {
       select(-1);
       selectPad(-1);

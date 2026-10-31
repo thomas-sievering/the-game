@@ -19,15 +19,27 @@ export function distanceField(hole: Hole): (x: number, y: number) => number {
   for (let cy = 0; cy < h; cy++) for (let cx = 0; cx < w; cx++) passable[cy * w + cx] = open(cx, cy) ? 1 : 0;
 
   // Dijkstra on the grid, seeded from the cup.
-  const start = Math.round((hole.cup[1] - minY) / CELL) * w + Math.round((hole.cup[0] - minX) / CELL);
+  const cellOf = ([x, y]: [number, number]) => Math.round((y - minY) / CELL) * w + Math.round((x - minX) / CELL);
+  const start = cellOf(hole.cup);
   dist[start] = 0;
   const queue = [start];
+  // Portal ends are linked at no cost, so the field knows they are a shortcut.
+  const jumps = new Map<number, number>();
+  for (const { a, b } of hole.portals ?? []) {
+    jumps.set(cellOf(a), cellOf(b));
+    jumps.set(cellOf(b), cellOf(a));
+  }
   while (queue.length) {
     let best = 0;
     for (let i = 1; i < queue.length; i++) if (dist[queue[i]] < dist[queue[best]]) best = i;
     const cur = queue.splice(best, 1)[0];
     const cx = cur % w;
     const cy = (cur - cx) / w;
+    const jump = jumps.get(cur);
+    if (jump !== undefined && dist[cur] < dist[jump]) {
+      if (dist[jump] === Infinity) queue.push(jump);
+      dist[jump] = dist[cur];
+    }
     for (const [dx, dy, cost] of [
       [1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1],
       [1, 1, 1.414], [1, -1, 1.414], [-1, 1, 1.414], [-1, -1, 1.414],

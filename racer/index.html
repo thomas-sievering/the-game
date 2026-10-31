@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Racer</title>
+  </head>
+  <body>
+    <div id="stage"></div>
+
+    <section id="home" class="screen card">
+      <h1 class="logo">RACER<span>top-down party racing</span></h1>
+      <input id="name" maxlength="16" autocomplete="off" placeholder="Your name" />
+      <button id="create" class="primary">Create room</button>
+      <div class="join-row">
+        <input id="code" maxlength="4" autocomplete="off" placeholder="CODE" />
+        <button id="join">Join</button>
+      </div>
+      <p id="home-error" class="error"></p>
+      <p class="muted keys-help"><kbd>↑</kbd> gas · <kbd>↓</kbd> brake / reverse · <kbd>←</kbd><kbd>→</kbd> steer</p>
+    </section>
+
+    <section id="lobby" class="screen card wide hidden">
+      <div class="lobby-head">
+        <div>
+          <p class="muted">Room code</p>
+          <div id="lobby-code" class="room-code"></div>
+        </div>
+        <button id="leave-lobby" class="link">Leave</button>
+      </div>
+      <p class="list-title">Track</p>
+      <div id="tracks" class="tracks"></div>
+      <div class="options">
+        <div class="option">
+          <span class="list-title">Laps</span>
+          <div id="laps" class="segmented"></div>
+        </div>
+        <div class="option">
+          <span class="list-title">Bots</span>
+          <div class="stepper">
+            <button id="bots-less" title="Fewer bots">−</button>
+            <span id="bots-count">0</span>
+            <button id="bots-more" title="More bots">+</button>
+          </div>
+        </div>
+      </div>
+      <p id="lobby-players-title" class="list-title"></p>
+      <ul id="lobby-players" class="player-list"></ul>
+      <div id="lobby-spectators-box" class="hidden">
+        <p class="list-title">Spectators</p>
+        <ul id="lobby-spectators" class="player-list"></ul>
+      </div>
+      <button id="start" class="primary hidden">Start race</button>
+      <p id="lobby-wait" class="muted"></p>
+    </section>
+
+    <div id="hud" class="hidden">
+      <ol id="standings" class="standings"></ol>
+      <div class="lapbox">
+        <div id="lap" class="lap"></div>
+        <div id="race-time" class="race-time"></div>
+        <div id="best-lap" class="best-lap"></div>
+        <div id="spectating" class="spectating hidden"></div>
+      </div>
+      <div id="position" class="position"></div>
+      <div id="speedo" class="speedo">
+        <div><span id="speed">0</span><small>km/h</small></div>
+        <div class="boost-bar"><div id="boost-fill"></div></div>
+      </div>
+      <div id="lights" class="lights hidden"><i></i><i></i><i></i></div>
+      <div id="banner" class="banner hidden"></div>
+      <div id="lap-pop" class="lap-pop hidden"></div>
+      <div id="help" class="help"></div>
+      <button id="retire" class="retire" title="Give up this race">Retire</button>
+      <div id="result" class="result card wide hidden"></div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <div class="sound">
+      <label class="music" title="Music volume">
+        <span>♪</span>
+        <input id="music-volume" type="range" min="0" max="100" step="1" />
+      </label>
+      <button id="mute" title="Sound (M)"></button>
+    </div>
+
+    <script type="module" src="/src/client/main.ts"></script>
+  </body>
+</html>

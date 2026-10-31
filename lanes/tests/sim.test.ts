@@ -6,6 +6,7 @@ import {
   BASE_HP,
   BREACH_MIN,
   COLS,
+  DISCARD_COST,
   DRAW,
   FIELD_WIDTH,
   HAND_SIZE,
@@ -25,6 +26,7 @@ import {
   padOpen,
   WAVE_TICKS,
   createBattle,
+  discard,
   invest,
   play,
   research,
@@ -81,6 +83,33 @@ describe("hand and deck", () => {
       expect(player.hand.every(Boolean)).toBe(true);
       expect(player.hand.length + player.deck.length + player.discard.length).toBe(STARTER_DECK.length);
     }
+  });
+
+  it("discarding costs gold and puts the card at the bottom of the draw pile", () => {
+    const battle = createBattle();
+    const player = battle.players[0];
+    player.hand[0] = "golem";
+    const next = player.deck[player.deck.length - 1];
+    expect(discard(battle, 0, 0)).toBeNull();
+    expect(player.gold).toBe(START_GOLD - DISCARD_COST);
+    expect(player.hand[0]).toBe(next);
+    expect(player.deck[0]).toBe("golem");
+    player.gold = DISCARD_COST - 1;
+    expect(discard(battle, 0, 1)).toBe("Not enough gold");
+    expect(discard(battle, 0, 9)).toBe("No card in that slot");
+  });
+
+  it("a discard from an empty draw pile reshuffles first so the card doesn't come straight back", () => {
+    const battle = createBattle();
+    const player = battle.players[0];
+    player.gold = 100_000;
+    player.discard.push(...player.deck);
+    player.deck = [];
+    const card = player.hand[0];
+    expect(discard(battle, 0, 0)).toBeNull();
+    expect(player.hand[0]).not.toBe(card);
+    expect(player.deck[0]).toBe(card);
+    expect(player.hand.length + player.deck.length + player.discard.length).toBe(STARTER_DECK.length);
   });
 
   it("deals from a custom deck with duplicate copies", () => {
@@ -633,6 +662,104 @@ describe("spells", () => {
   });
 });
 
+describe("fliers", () => {
+  /** A frozen enemy flier at `x` in the top lane, so it stays put as a target. */
+  const flier = (battle: Battle, card: string, x: number) => {
+    const unit = spawnUnit(battle, 1, card, 0);
+    Object.assign(unit, { x, frozenTicks: 1e6 });
+    return unit;
+  };
+
+  it("ground-only units ignore fliers and walk on", () => {
+    const battle = noTowers();
+    const footman = spawnUnit(battle, 0, "footman", 0);
+    footman.x = 500;
+    const hawk = flier(battle, "hawk", 510);
+    run(battle, 40);
+    expect(hawk.hp).toBe(hawk.maxHp);
+    expect(footman.x).toBeGreaterThan(520);
+  });
+
+  it("archers, snipers and spearmen hit fliers", () => {
+    for (const card of ["archer", "sniper", "spearman"]) {
+      const battle = noTowers();
+      spawnUnit(battle, 0, card, 0).x = 500;
+      const drake = flier(battle, "drake", 540);
+      run(battle, 80);
+      expect(drake.hp, card).toBeLessThan(drake.maxHp);
+    }
+  });
+
+  it("hawks only attack fliers", () => {
+    const ground = noTowers();
+    const hawk = spawnUnit(ground, 0, "hawk", 0);
+    hawk.x = 500;
+    const brute = spawnUnit(ground, 1, "brute", 0);
+    Object.assign(brute, { x: 520, frozenTicks: 1e6 });
+    run(ground, 40);
+    expect(brute.hp).toBe(brute.maxHp);
+    expect(hawk.x).toBeGreaterThan(540);
+
+    const air = noTowers();
+    spawnUnit(air, 0, "hawk", 0).x = 500;
+    const balloon = flier(air, "balloon", 540);
+    run(air, 40);
+    expect(balloon.hp).toBeLessThan(balloon.maxHp);
+  });
+
+  it("balloons bomb the ground but not fliers, and drakes hit both", () => {
+    const battle = noTowers();
+    const balloon = spawnUnit(battle, 0, "balloon", 0);
+    balloon.x = 500;
+    const hawk = flier(battle, "hawk", 505);
+    run(battle, 40);
+    expect(hawk.hp).toBe(hawk.maxHp);
+    const brute = spawnUnit(battle, 1, "brute", 0);
+    Object.assign(brute, { x: balloon.x + 10, frozenTicks: 1e6 });
+    run(battle, 80);
+    expect(brute.hp).toBeLessThan(brute.maxHp);
+
+    for (const card of ["hawk", "brute"]) {
+      const fight = noTowers();
+      spawnUnit(fight, 0, "drake", 0).x = 500;
+      const target = flier(fight, card, 540);
+      run(fight, 60);
+      expect(target.hp, card).toBeLessThan(target.maxHp);
+    }
+  });
+
+  it("towers and base turrets shoot fliers", () => {
+    const battle = createBattle();
+    const tower = battle.players[0].towers[0];
+    const hawk = flier(battle, "hawk", tower.x + TOWER.range - 1);
+    step(battle);
+    expect(hawk.hp).toBe(hawk.maxHp - TOWER.damage);
+
+    const base = noTowers();
+    const balloon = flier(base, "balloon", TURRET.range - 1);
+    step(base);
+    expect(balloon.hp).toBe(balloon.maxHp - TURRET.earlyDamage);
+  });
+
+  it("hawks can't knock down towers", () => {
+    const battle = createBattle();
+    const hawk = spawnUnit(battle, 0, "hawk", 0);
+    hawk.hp = hawk.maxHp = 1e6;
+    run(battle, 400);
+    expect(battle.players[1].towers[0].hp).toBe(TOWER.hp);
+  });
+
+  it("fliers pass over ground units without pushing them", () => {
+    const battle = createBattle();
+    const footman = spawnUnit(battle, 0, "footman", 1);
+    const balloon = spawnUnit(battle, 0, "balloon", 1);
+    Object.assign(footman, { x: 300, frozenTicks: 1e6 });
+    Object.assign(balloon, { x: 300, frozenTicks: 1e6 });
+    step(battle);
+    expect([footman.x, footman.y, balloon.x, balloon.y]).toEqual([300, rowCenter(1), 300, rowCenter(1)]);
+  });
+});
+
 describe("shrine", () => {
   /** Parks a frozen unit of a side on the shrine. */
   const hold = (battle: Battle, side: 0 | 1) => {
@@ -671,6 +798,16 @@ describe("shrine", () => {
     expect(battle.shrine.owner).toBe(-1);
     run(battle, SHRINE.captureTicks - 1);
     expect(battle.shrine.owner).toBe(1);
+  });
+
+  it("fliers don't hold or contest it", () => {
+    const battle = createBattle();
+    Object.assign(spawnUnit(battle, 1, "drake", 1), { x: SHRINE.x, y: SHRINE.y, frozenTicks: 1e6 });
+    run(battle, SHRINE.captureTicks);
+    expect(battle.shrine.owner).toBe(-1);
+    hold(battle, 0);
+    run(battle, SHRINE.captureTicks);
+    expect(battle.shrine.owner).toBe(0);
   });
 
   it("pays its owner extra income", () => {
