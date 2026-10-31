@@ -1,7 +1,7 @@
 // Deterministic shot simulation shared by server and client.
 // Only + - * / and Math.sqrt are used, so results are bit-identical across JS engines.
 // Integer ops on whole substep counts (%, Math.round) are exact too.
-import { type Hole, type Mover, type Point, type Segment, holeSegments, pointInPolygon } from "./hole";
+import { type Hole, type Mover, type Point, type Portal, type Segment, holeSegments, pointInPolygon } from "./hole";
 
 export const TICK_RATE = 120;
 export const SUBSTEPS = 2;
@@ -25,6 +25,11 @@ const STOP_SPEED = 6;
 const BUMPER_RESTITUTION = 0.85;
 const BUMPER_KICK = 230;
 const MOVER_RESTITUTION = 0.6;
+const ICE_ROLL_DECEL = 22;
+const ICE_DRAG = 0.12;
+/** Share of the sideways speed a boost pad keeps per substep, so it turns the ball onto its arrow. */
+const BOOST_SIDE_KEEP = 0.9;
+export const PORTAL_RADIUS = 16;
 const PI = 3.141592653589793;
 const SOUND_SPEED = 25;
 
@@ -40,7 +45,10 @@ export type SimEvent =
   | { tick: number; type: "cup"; id: string }
   | { tick: number; type: "splash"; id: string; x: number; y: number }
   | { tick: number; type: "bumper"; id: string; index: number; speed: number }
-  | { tick: number; type: "mover"; id: string; speed: number };
+  | { tick: number; type: "mover"; id: string; speed: number }
+  | { tick: number; type: "boost"; id: string }
+  /** Ball dropped into one end of portal `index` and came out at x/y. */
+  | { tick: number; type: "portal"; id: string; index: number; x: number; y: number };
 
 export interface BallResult {
   id: string;
@@ -71,6 +79,9 @@ interface Body {
   active: boolean;
   holed: boolean;
   splashed: boolean;
+  /** Portal the ball just came out of; it must roll clear of it before that portal works again. */
+  portal: number;
+  onBoost: boolean;
 }
 
 interface World {
@@ -98,21 +109,34 @@ export function aimToVelocity(aim: Point): Point {
   return [(dx / length) * speed, (dy / length) * speed];
 }
 
-function surfaceAt(hole: Hole, x: number, y: number): { sand: boolean; water: boolean; fx: number; fy: number } {
+interface Surface {
+  sand: boolean;
+  water: boolean;
+  ice: boolean;
+  fx: number;
+  fy: number;
+  boost: Point | null;
+}
+
+function surfaceAt(hole: Hole, x: number, y: number): Surface {
   let sand = false;
   let water = false;
+  let ice = false;
+  let boost: Point | null = null;
   let fx = 0;
   let fy = 0;
   for (const zone of hole.zones) {
     if (!pointInPolygon(x, y, zone.points)) continue;
     if (zone.type === "sand") sand = true;
     else if (zone.type === "water") water = true;
+    else if (zone.type === "ice") ice = true;
+    else if (zone.type === "boost") boost = zone.velocity;
     else {
       fx += zone.force[0];
       fy += zone.force[1];
     }
   }
-  return { sand, water, fx, fy };
+  return { sand, water, ice, fx, fy, boost };
 }
 
 // ── Moving obstacles ──
@@ -193,6 +217,8 @@ export function simulateShot(
     active: true,
     holed: false,
     splashed: false,
+    portal: portalAt(hole, b.x, b.y),
+    onBoost: false,
   }));
   const events: SimEvent[] = [];
   const frames: Float64Array[] | undefined = options.record ? [] : undefined;
@@ -234,12 +260,20 @@ function step(world: World, bodies: Body[], events: SimEvent[], tick: number, su
   const { hole, segments, movers } = world;
   const poses = movers.map((m) => moverPose(m, substep));
   const bumpers = hole.bumpers ?? [];
+  const portals = hole.portals ?? [];
 
   for (const b of bodies) {
     if (!b.active) continue;
     const surface = surfaceAt(hole, b.x, b.y);
-    const roll = surface.sand ? SAND_ROLL_DECEL : ROLL_DECEL;
-    const drag = surface.sand ? SAND_DRAG : DRAG;
+    const slick = surface.ice && !surface.sand;
+    const roll = surface.sand ? SAND_ROLL_DECEL : slick ? ICE_ROLL_DECEL : ROLL_DECEL;
+    const drag = surface.sand ? SAND_DRAG : slick ? ICE_DRAG : DRAG;
+
+    if (surface.boost) {
+      if (!b.onBoost) events.push({ tick, type: "boost", id: b.id });
+      boost(b, surface.boost);
+    }
+    b.onBoost = surface.boost !== null;
 
     let speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
     const slope = Math.sqrt(surface.fx * surface.fx + surface.fy * surface.fy);
@@ -264,6 +298,7 @@ function step(world: World, bodies: Body[], events: SimEvent[], tick: number, su
     for (let i = 0; i < movers.length; i++) collideMover(b, movers[i], poses[i], events, tick);
     for (const seg of segments) collideSegment(b, seg, events, tick);
     for (let i = 0; i < bumpers.length; i++) collideBumper(b, bumpers[i].center, bumpers[i].radius, i, events, tick);
+    if (portals.length > 0) usePortals(b, portals, events, tick);
 
     const after = surfaceAt(hole, b.x, b.y);
     if (after.water) {
@@ -289,6 +324,52 @@ function step(world: World, bodies: Body[], events: SimEvent[], tick: number, su
 
   for (let i = 0; i < bodies.length; i++) {
     for (let j = i + 1; j < bodies.length; j++) collideBalls(bodies[i], bodies[j], events, tick);
+  }
+}
+
+/** Raises the ball's speed along `velocity` to at least its length and bleeds off sideways speed. */
+function boost(b: Body, velocity: Point): void {
+  const target = Math.sqrt(velocity[0] * velocity[0] + velocity[1] * velocity[1]);
+  if (!(target > 0)) return;
+  const ux = velocity[0] / target;
+  const uy = velocity[1] / target;
+  let along = b.vx * ux + b.vy * uy;
+  const side = (b.vy * ux - b.vx * uy) * BOOST_SIDE_KEEP;
+  if (along < target) along = target;
+  b.vx = ux * along - uy * side;
+  b.vy = uy * along + ux * side;
+}
+
+/** Index of the portal with an end under (x, y), or -1. */
+function portalAt(hole: Hole, x: number, y: number): number {
+  const portals = hole.portals ?? [];
+  for (let i = 0; i < portals.length; i++) {
+    if (near(x, y, portals[i].a, PORTAL_RADIUS) || near(x, y, portals[i].b, PORTAL_RADIUS)) return i;
+  }
+  return -1;
+}
+
+function near(x: number, y: number, p: Point, r: number): boolean {
+  const dx = x - p[0];
+  const dy = y - p[1];
+  return dx * dx + dy * dy < r * r;
+}
+
+function usePortals(b: Body, portals: Portal[], events: SimEvent[], tick: number): void {
+  if (b.portal >= 0) {
+    const p = portals[b.portal];
+    if (near(b.x, b.y, p.a, PORTAL_RADIUS) || near(b.x, b.y, p.b, PORTAL_RADIUS)) return;
+    b.portal = -1;
+  }
+  for (let i = 0; i < portals.length; i++) {
+    const { a, b: other } = portals[i];
+    const exit = near(b.x, b.y, a, PORTAL_RADIUS) ? other : near(b.x, b.y, other, PORTAL_RADIUS) ? a : null;
+    if (!exit) continue;
+    b.x = exit[0];
+    b.y = exit[1];
+    b.portal = i;
+    events.push({ tick, type: "portal", id: b.id, index: i, x: b.x, y: b.y });
+    return;
   }
 }
 

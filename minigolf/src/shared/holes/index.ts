@@ -29,6 +29,16 @@ import whirlpool from "./27-whirlpool.json";
 import crescent from "./28-crescent.json";
 import cascade from "./29-cascade.json";
 import clockwork from "./30-clockwork.json";
+import frozenPond from "./31-frozen-pond.json";
+import wormhole from "./32-wormhole.json";
+import speedway from "./33-speedway.json";
+import diagonalAlley from "./34-diagonal-alley.json";
+import arrowhead from "./35-arrowhead.json";
+import ricochet from "./36-ricochet.json";
+import portalHop from "./37-portal-hop.json";
+import glacier from "./38-glacier.json";
+import slingshot from "./39-slingshot.json";
+import prism from "./40-prism.json";
 
 /** Every hole; each match draws HOLES_PER_ROUND of them. */
 export const HOLES = [
@@ -62,4 +72,14 @@ export const HOLES = [
   crescent,
   cascade,
   clockwork,
+  frozenPond,
+  wormhole,
+  speedway,
+  diagonalAlley,
+  arrowhead,
+  ricochet,
+  portalHop,
+  glacier,
+  slingshot,
+  prism,
 ] as Hole[];

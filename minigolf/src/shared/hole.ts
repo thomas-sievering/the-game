@@ -3,7 +3,11 @@ export type Point = [number, number];
 export type Zone =
   | { type: "sand"; points: Point[] }
   | { type: "water"; points: Point[] }
-  | { type: "slope"; points: Point[]; force: Point };
+  | { type: "slope"; points: Point[]; force: Point }
+  /** Slick surface: the ball barely slows down on it. */
+  | { type: "ice"; points: Point[] }
+  /** Dash strip: lines the ball up with `velocity` and speeds it up to at least that fast. */
+  | { type: "boost"; points: Point[]; velocity: Point };
 
 /** Round bounce pad that kicks the ball back out faster than it came in. */
 export interface Bumper {
@@ -20,6 +24,12 @@ export type Mover =
   | { type: "slider"; points: Point[]; path: Point; period: number; phase?: number }
   | { type: "spinner"; center: Point; length: number; width: number; arms: number; period: number; phase?: number };
 
+/** Pair of linked holes in the carpet: a ball rolling into one end comes out of the other at the same velocity. */
+export interface Portal {
+  a: Point;
+  b: Point;
+}
+
 export interface Hole {
   id: string;
   name: string;
@@ -31,6 +41,7 @@ export interface Hole {
   zones: Zone[];
   bumpers?: Bumper[];
   movers?: Mover[];
+  portals?: Portal[];
   tee: Point;
   cup: Point;
   /** Aim vectors (target minus ball position) that hole out when played solo from course tick 0. */
