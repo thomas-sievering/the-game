@@ -84,7 +84,7 @@ function renderDeck(cards: string[]) {
   $<HTMLButtonElement>("deck-done").disabled = !!error;
   $("deck-rules").textContent =
     `Pick ${DECK_SIZE} cards, up to ${MAX_COPIES} copies of each. Click a card to add it, right-click to remove it. ` +
-    `Cards of tier II and III can only be played after researching that tier in the match.`;
+    `Cards of tier II and III can only be played after researching that tier in the match; each tier also opens another column of pads.`;
   const container = $("deck-cards");
   if (!container.children.length) {
     container.innerHTML = Object.values(CARDS)
@@ -179,8 +179,8 @@ function render() {
   if (self) {
     $("gold").textContent = `${self.gold} gold`;
     const shrine = s.shrineOwner === self.side ? SHRINE.income : 0;
-    $("income").textContent = `+${self.income + shrine}/s`;
-    $("income").title = shrine ? `Includes +${shrine}/s from the shrine` : "";
+    $("income").textContent = self.researchDone ? "paused" : `+${self.income + shrine}/s`;
+    $("income").title = self.researchDone ? "No gold per second while researching" : shrine ? `Includes +${shrine}/s from the shrine` : "";
     $("income").classList.toggle("shrine", shrine > 0);
     $("invest").textContent = `Invest ${self.investCost} → +1/s`;
     $<HTMLButtonElement>("invest").disabled = self.gold < self.investCost;
@@ -189,7 +189,7 @@ function render() {
     if (selectedCell !== -1 && !self.grid[selectedCell]) selectPad(-1);
     renderSell(self);
   }
-  const board = (p?: PlayerState): Board => ({ grid: [...(p?.grid ?? [])], levels: [...(p?.levels ?? [])] });
+  const board = (p?: PlayerState): Board => ({ grid: [...(p?.grid ?? [])], levels: [...(p?.levels ?? [])], tier: p?.tier ?? 1 });
   // Spectators see both build grids, side 0 on the left.
   renderer.setBoards(board(self ?? bySide(0)), self ? null : board(bySide(1)));
   renderer.setShrine(s.shrineOwner, s.shrineControl);

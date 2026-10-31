@@ -79,7 +79,7 @@ test("the host spectates and a latecomer watches mid-match", async ({ browser })
   await alice.click("#start");
   await expect.poll(() => lanes(carol, (l) => l.phase)).toBe("playing");
   await expect(carol.locator(".hand-card strong")).toHaveCount(4);
-  expect(await placeUnit(carol, 5)).toBe(true);
+  expect(await placeUnit(carol, 9)).toBe(true);
 
   await dave.goto("/");
   await dave.fill("#name", "Dave");
@@ -91,7 +91,7 @@ test("the host spectates and a latecomer watches mid-match", async ({ browser })
     await expect(page.locator("#spectating")).toBeVisible();
     await expect(page.locator(".bottom")).toBeHidden();
     // Spectators see both players' grids.
-    expect(await lanes(page, (l) => l.visibleGrids)).toEqual([12, 12]);
+    expect(await lanes(page, (l) => l.visibleGrids)).toEqual([18, 18]);
   }
   await expect.poll(() => lanes(dave, (l) => l.unitCount), { timeout: 30_000 }).toBeGreaterThan(0);
   await dave.screenshot({ path: shots("spectate-2-watching") });
@@ -118,11 +118,11 @@ test("two players build, a wave fights and a spell is cast", { tag: "@prod" }, a
   await alice.click("#start");
   await expect.poll(() => lanes(bob, (l) => l.phase)).toBe("playing");
   await expect(alice.locator(".hand-card strong")).toHaveCount(4);
-  await expect(alice.locator("#research")).toHaveText("Tier II 250 · 40 s");
+  await expect(alice.locator("#research")).toHaveText("Tier II 150 · 30 s");
 
   for (const [page, cells] of [
-    [alice, [5, 7]],
-    [bob, [3, 9]],
+    [alice, [9, 11]],
+    [bob, [5, 15]],
   ] as const) {
     for (const cell of cells) expect(await placeUnit(page, cell)).toBe(true);
   }
@@ -130,21 +130,36 @@ test("two players build, a wave fights and a spell is cast", { tag: "@prod" }, a
 
   // Bob sells a pad: click it, then S.
   const gold = await lanes(bob, (l) => l.gold);
-  const pad = await lanes(bob, (l) => l.cellOnScreen(9));
+  const pad = await lanes(bob, (l) => l.cellOnScreen(15));
   await bob.mouse.click(pad.x, pad.y);
   await expect(bob.locator("#sell")).toBeVisible();
   await bob.keyboard.press("s");
-  await expect.poll(() => lanes(bob, (l) => l.grid[9])).toBe("");
+  await expect.poll(() => lanes(bob, (l) => l.grid[15])).toBe("");
   expect(await lanes(bob, (l) => l.gold)).toBeGreaterThan(gold);
-  expect(await placeUnit(bob, 9)).toBe(true);
+  expect(await placeUnit(bob, 15)).toBe(true);
+  // The back column stays locked until tier III; a card played there is refused.
+  await expect.poll(async () => {
+    const { hand, gold } = await lanes(bob, (l) => ({ hand: l.hand, gold: l.gold }));
+    return hand.some((id) => CARDS[id]?.kind === "unit" && CARDS[id].tier === 1 && CARDS[id].cost <= gold);
+  }, { timeout: 15_000 }).toBe(true);
+  const { hand: bobHand, gold: bobGold } = await lanes(bob, (l) => ({ hand: l.hand, gold: l.gold }));
+  await bob.keyboard.press(String(bobHand.findIndex((id) => CARDS[id]?.kind === "unit" && CARDS[id].tier === 1 && CARDS[id].cost <= bobGold) + 1));
+  const locked = await lanes(bob, (l) => l.cellOnScreen(6));
+  await bob.mouse.click(locked.x, locked.y);
+  await expect(bob.locator("#toast")).toHaveText("That pad opens at tier 3");
+  expect(await lanes(bob, (l) => l.grid[6])).toBe("");
+  await bob.keyboard.press("Escape");
   // Each player only receives their own grid.
-  for (const page of [alice, bob]) expect((await lanes(page, (l) => l.visibleGrids)).sort()).toEqual([0, 12]);
+  for (const page of [alice, bob]) expect((await lanes(page, (l) => l.visibleGrids)).sort()).toEqual([0, 18]);
 
   // The first wave spawns at 20 s; keep building until a spell shows up in Alice's hand.
   await expect.poll(() => lanes(alice, (l) => l.unitCount), { timeout: 30_000 }).toBeGreaterThan(0);
   await alice.waitForTimeout(6000);
   let cast = false;
-  for (let cell = 0; !cast && cell < 12; cell++) {
+  // At tier I only the four columns nearest the base (2 to 5 of each row of 6) are open.
+  const open = [2, 3, 4, 5, 8, 9, 10, 11, 14, 15, 16, 17];
+  for (let i = 0; !cast && i < open.length; i++) {
+    const cell = open[i];
     cast = await castSpell(alice);
     // Occupied pads refuse other cards, so only build on empty ones to keep the hand moving.
     if (!cast && !(await lanes(alice, (l, c) => l.grid[c], cell))) {
@@ -235,7 +250,7 @@ test("playing a unit onto the same unit levels it up and the field shows its ran
     }
     const id = hand[slot];
     const own = grid.findIndex((c, cell) => c === id && levels[cell] < 3);
-    const cell = own !== -1 ? own : [4, 5, 6].find((c) => !grid[c]) ?? 4;
+    const cell = own !== -1 ? own : [8, 9, 10].find((c) => !grid[c]) ?? 8;
     await alice.keyboard.press(String(slot + 1));
     const point = await lanes(alice, (l, c) => l.cellOnScreen(c), cell);
     if (own !== -1) {
@@ -280,7 +295,7 @@ test("a new unit takes the field and new spells show their tier and casts left",
   for (let i = 0; i < 60; i++) {
     const { grid, spellsCast } = await lanes(alice, (l) => ({ grid: l.grid, spellsCast: l.spellsCast }));
     if (grid.includes("berserker") && spellsCast > 0) break;
-    const cell = grid.indexOf("berserker") === -1 ? 5 : grid.indexOf("berserker");
+    const cell = grid.indexOf("berserker") === -1 ? 9 : grid.indexOf("berserker");
     const acted = (spellsCast === 0 && (await castSpell(alice))) || (await lanes(alice, (l, c) => l.levels[c] < 3, cell)) && (await placeUnit(alice, cell));
     if (!acted) await alice.waitForTimeout(1000);
   }

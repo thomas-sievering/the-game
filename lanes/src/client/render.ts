@@ -1,6 +1,6 @@
 import { Application, Container, Graphics, Rectangle, Text } from "pixi.js";
 import { CARDS } from "../shared/cards";
-import { COLS, FIELD_HEIGHT, FIELD_WIDTH, type Fx, MAX_LEVEL, ROW_HEIGHT, ROWS, SHRINE, TOWER, rowCenter } from "../shared/sim";
+import { COLS, FIELD_HEIGHT, FIELD_WIDTH, type Fx, MAX_LEVEL, MAX_TIER, ROW_HEIGHT, ROWS, SHRINE, TOWER, padOpen, rowCenter } from "../shared/sim";
 import { TABLE, drawMini, drawSpellIcon, miniHeight, miniRadius, mix, shade } from "./minis";
 
 export const PALETTE = {
@@ -61,6 +61,8 @@ export interface Board {
   grid: string[];
   /** Level per build cell, 0 when empty. */
   levels: number[];
+  /** Researched tier; pads in columns it hasn't opened are locked. */
+  tier: number;
 }
 
 /** What the renderer remembers about a unit between frames. */
@@ -110,8 +112,8 @@ interface Floater {
 }
 
 const BASE_WIDTH = 60;
-const SLOT_WIDTH = 100;
-const PAD_SIZE = 84;
+const SLOT_WIDTH = 88;
+const PAD_SIZE = 78;
 const GRID_WIDTH = COLS * SLOT_WIDTH;
 const LEFT = GRID_WIDTH + BASE_WIDTH + 12;
 const CELLS = ROWS * COLS;
@@ -181,8 +183,8 @@ export class Renderer {
   private art = new Map<string, string>();
   /** Left and right build grids; the right one only shows while `showBoth` is set. */
   private boards: [Board, Board] = [
-    { grid: [], levels: [] },
-    { grid: [], levels: [] },
+    { grid: [], levels: [], tier: 1 },
+    { grid: [], levels: [], tier: 1 },
   ];
   private showBoth = false;
   /** Seconds left of the flash on a pad that just levelled up, per board cell. */
@@ -431,7 +433,7 @@ export class Renderer {
     const g = this.grid.clear();
     const pulse = 0.55 + 0.45 * Math.sin(this.time * 6);
     for (let board = 0; board < 2; board++) {
-      const { grid, levels } = this.boards[board];
+      const { grid, levels, tier } = this.boards[board];
       const color = board === 0 ? PALETTE.me : PALETTE.them;
       for (let cell = 0; cell < CELLS; cell++) {
         const label = this.padLabels[board * CELLS + cell];
@@ -442,14 +444,26 @@ export class Renderer {
         const card = grid[cell] ?? "";
         const level = levels[cell] ?? 0;
         const mine = board === 0 && this.interactive;
-        // While placing, a pad takes the card if it is empty or holds the same card below max level.
-        const fits = mine && this.placing !== "" && (!card || (card === this.placing && level < MAX_LEVEL));
+        const open = padOpen(tier, cell);
+        // While placing, a pad takes the card if it is open and empty, or holds the same card below max level.
+        const fits = mine && this.placing !== "" && open && (!card || (card === this.placing && level < MAX_LEVEL));
         const hover = mine && cell === this.hoverCell && (this.placing !== "" || card !== "");
         const blocked = hover && this.placing !== "" && !fits;
 
         // A recessed card slot in the wooden tray.
-        g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 10).fill(hover && !blocked ? shade(PALETTE.slot, 1.25) : PALETTE.slot);
+        g.roundRect(x, y, PAD_SIZE, PAD_SIZE, 10).fill(!open ? shade(PALETTE.slot, 0.7) : hover && !blocked ? shade(PALETTE.slot, 1.25) : PALETTE.slot);
         g.roundRect(x + 2, y + 2, PAD_SIZE - 4, 6, 3).fill({ color: 0x000000, alpha: 0.18 });
+        if (!open) {
+          // A locked slot: a padlock until research opens its column.
+          const [lx, ly] = [x + PAD_SIZE / 2, y + PAD_SIZE / 2 - 8];
+          g.roundRect(lx - 7, ly - 13, 14, 16, 7).stroke({ color: PALETTE.stitch, width: 2.5, alpha: 0.35 });
+          g.roundRect(lx - 10, ly - 3, 20, 15, 3).fill({ color: PALETTE.stitch, alpha: 0.35 });
+          if (blocked) g.roundRect(x - 1, y - 1, PAD_SIZE + 2, PAD_SIZE + 2, 11).stroke({ color: PALETTE.blocked, width: 3 });
+          const name = `Tier ${MAX_TIER - (cell % COLS) === 2 ? "II" : "III"}`;
+          if (label.text !== name) label.text = name;
+          label.alpha = 0.6;
+          continue;
+        }
         dashedRect(g, x + 7, y + 7, PAD_SIZE - 14, PAD_SIZE - 14, { color: PALETTE.stitch, width: 1.5, alpha: 0.28 });
 
         // Hovering a pad that takes the card previews it there, one level up.
