@@ -7,7 +7,10 @@ import { CARDS, SIZE, type SpellCard, STARTER_DECK, type UnitCard, canHit, unitC
 export const TICK_RATE = 20;
 export const FIELD_WIDTH = 1200;
 export const ROWS = 3;
-export const COLS = 4;
+/** Pad columns open at tier 1; each researched tier opens one more column at the back of the tray. */
+export const BASE_COLS = 4;
+export const MAX_TIER = 3;
+export const COLS = BASE_COLS + MAX_TIER - 1;
 export const ROW_HEIGHT = 140;
 export const FIELD_HEIGHT = ROWS * ROW_HEIGHT;
 export const BASE_HP = 1200;
@@ -27,19 +30,21 @@ export const COLUMN_SPAWN_STEP = 15;
 export const DRAW = 2;
 /** Playing a unit card on a pad holding the same card levels it up, to at most this level. */
 export const MAX_LEVEL = 3;
-/** Researching the next tier costs gold and takes time; index is the tier being researched. Tier 3 costs more. */
+/** Researching the next tier costs gold and takes time, during which the per-second gold stops; index is the tier being researched. */
 export const RESEARCH: Record<2 | 3, { cost: number; ticks: number }> = {
-  2: { cost: 250, ticks: 40 * TICK_RATE },
-  3: { cost: 500, ticks: 60 * TICK_RATE },
+  2: { cost: 150, ticks: 30 * TICK_RATE },
+  3: { cost: 300, ticks: 45 * TICK_RATE },
 };
-export const MAX_TIER = 3;
-/** Each base shoots the nearest enemy in reach. */
-export const TURRET = { damage: 40, range: 160, attackTicks: 20 };
+/** Each base shoots the nearest enemy in reach; `earlyDamage` applies before TURRET_EARLY_TICKS, so early pushes can land. */
+export const TURRET = { damage: 40, earlyDamage: 30, range: 160, attackTicks: 20 };
+export const TURRET_EARLY_TICKS = 3 * 60 * TICK_RATE;
+/** Least damage a single-unit breach does, so cheap units still threaten the base. */
+export const BREACH_MIN = 35;
 /**
  * Two towers stand in front of each base, in the top and bottom lanes, `x` from the base. They shoot the nearest
  * enemy in range, and enemies that come near stop to knock them down. A fallen tower pays `bounty` to the other side.
  */
-export const TOWER = { hp: 400, damage: 15, range: 150, attackTicks: 20, x: 130, rows: [0, 2], bounty: 40 };
+export const TOWER = { hp: 400, damage: 15, range: 150, attackTicks: 20, x: 130, rows: [0, 2], bounty: 100 };
 /** Neutral shrine in the middle of the centre lane. Units standing in it alone capture it; the owner earns extra gold per second. */
 export const SHRINE = { x: FIELD_WIDTH / 2, y: FIELD_HEIGHT / 2, radius: 70, captureTicks: 60, income: 2 };
 
@@ -229,6 +234,17 @@ export function scaled(value: number, level: number): number {
   return (twice - (twice % 2)) / 2;
 }
 
+/** Whether a build cell is open at a tier: tier 1 opens the BASE_COLS columns nearest the base. */
+export function padOpen(tier: number, cell: number): boolean {
+  return cell % COLS >= MAX_TIER - tier;
+}
+
+/** Base damage a unit of a card does when it breaches. Levels don't add to it; scaling breaches made matches end in under five minutes. */
+export function breachDamage(cardId: string): number {
+  const card = unitCard(cardId);
+  return card.count ? card.cost : Math.max(card.cost, BREACH_MIN);
+}
+
 /** Gold that selling a pad gives back: half of what its levels cost, rounded down. */
 export function sellValue(cardId: string, level: number): number {
   const spent = unitCard(cardId).cost * level;
@@ -247,6 +263,7 @@ export function play(battle: Battle, side: Side, handIndex: number, cell?: numbe
   if (card.tier > player.tier) return `${card.name} needs tier ${card.tier}`;
   if (card.kind === "unit") {
     if (cell === undefined || !Number.isInteger(cell) || cell < 0 || cell >= ROWS * COLS) return "Pick a cell on your grid";
+    if (!padOpen(player.tier, cell)) return `That pad opens at tier ${MAX_TIER - (cell % COLS)}`;
     const there = player.grid[cell];
     if (there && there !== card.id) return "That pad is taken; sell it first";
     if (there && player.levels[cell] >= MAX_LEVEL) return `${card.name} is already max level`;
@@ -451,7 +468,8 @@ export function step(battle: Battle): void {
   if (battle.tick % TICK_RATE === 0) {
     for (const side of [0, 1] as const) {
       const player = battle.players[side];
-      player.gold += player.income + (battle.shrine.owner === side ? SHRINE.income : 0);
+      // Researching pauses the per-second gold; bounties still pay.
+      if (!player.researchDone) player.gold += player.income + (battle.shrine.owner === side ? SHRINE.income : 0);
     }
   }
   for (const player of battle.players) {
@@ -566,7 +584,7 @@ function fireTurret(battle: Battle, side: Side): void {
     if (reach <= TURRET.range && (!target || reach < (target.x - baseX) * (side === 0 ? 1 : -1))) target = unit;
   }
   if (!target) return;
-  target.hp -= TURRET.damage;
+  target.hp -= battle.tick < TURRET_EARLY_TICKS ? TURRET.earlyDamage : TURRET.damage;
   player.turretCooldown = TURRET.attackTicks;
   battle.events.push({ type: "hit", id: 0, side, x: baseX, y: target.y, tx: target.x, ty: target.y, ranged: true, splash: 0, air: !!unitCard(target.card).flying });
 }
@@ -644,7 +662,9 @@ function act(battle: Battle, unit: Unit): void {
       for (const other of splash ? enemyTargets(battle, unit.side, card) : [target]) {
         const sx = other.x - target.x;
         const sy = other.y - target.y;
-        if (other === target || sx * sx + sy * sy <= splash * splash) other.hp -= damage;
+        if (other !== target && sx * sx + sy * sy > splash * splash) continue;
+        // Slayers hit units of a higher tier harder.
+        other.hp -= card.slayer && "card" in other && unitCard(other.card).tier > card.tier ? damage * card.slayer : damage;
       }
       battle.events.push({ type: "hit", id: unit.id, side: unit.side, x: unit.x, y: unit.y, tx: target.x, ty: target.y, ranged: card.range > 40 || splash > 0, splash, air: "card" in target && !!unitCard(target.card).flying });
     }
@@ -658,11 +678,11 @@ function act(battle: Battle, unit: Unit): void {
   }
   // Reaching the base breaches it once; the unit is spent and pays no bounty.
   const enemy = battle.players[unit.side === 0 ? 1 : 0];
-  // Levels help a unit get there but not hit harder; scaling breaches made matches end in under five minutes.
-  enemy.baseHp -= card.cost;
+  const breach = breachDamage(unit.card);
+  enemy.baseHp -= breach;
   unit.hp = 0;
   unit.breached = true;
-  battle.events.push({ type: "breach", side: unit.side, x: baseX, y: unit.y, damage: card.cost });
+  battle.events.push({ type: "breach", side: unit.side, x: baseX, y: unit.y, damage: breach });
 }
 
 /** Living enemy units the attacker can hit, then the enemy's standing towers if it can hit the ground. */

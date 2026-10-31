@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { CARDS, STARTER_DECK, deckError, unitCard } from "../src/shared/cards";
 import {
   type Battle,
+  BASE_COLS,
   BASE_HP,
+  BREACH_MIN,
   COLS,
   DISCARD_COST,
   DRAW,
@@ -18,6 +20,10 @@ import {
   TICK_RATE,
   TOWER,
   TURRET,
+  TURRET_EARLY_TICKS,
+  ROWS,
+  breachDamage,
+  padOpen,
   WAVE_TICKS,
   createBattle,
   discard,
@@ -183,7 +189,35 @@ describe("tiers", () => {
     expect(play(battle, 0, 0, 0)).toBe("Knight needs tier 2");
     expect(player.gold).toBe(1000);
     player.tier = 2;
-    expect(play(battle, 0, 0, 0)).toBeNull();
+    expect(play(battle, 0, 0, COLS - 1)).toBeNull();
+  });
+
+  it("each tier opens another column of pads at the back of the tray", () => {
+    const battle = createBattle();
+    const player = battle.players[0];
+    const open = () => player.grid.filter((_, cell) => padOpen(player.tier, cell)).length;
+    expect(open()).toBe(ROWS * BASE_COLS);
+    give(battle, 0, "footman");
+    player.tier = 1;
+    expect(play(battle, 0, 0, COLS + 1)).toBe("That pad opens at tier 2");
+    expect(play(battle, 0, 0, COLS)).toBe("That pad opens at tier 3");
+    player.tier = 2;
+    expect(open()).toBe(ROWS * (BASE_COLS + 1));
+    expect(play(battle, 0, 0, COLS + 1)).toBeNull();
+    player.tier = 3;
+    expect(open()).toBe(ROWS * COLS);
+  });
+
+  it("researching pauses the per-second gold", () => {
+    const battle = createBattle();
+    const player = battle.players[0];
+    player.gold = RESEARCH[2].cost;
+    research(battle, 0);
+    run(battle, RESEARCH[2].ticks - 1);
+    expect(player.gold).toBe(0);
+    run(battle, TICK_RATE + 1);
+    expect(player.tier).toBe(2);
+    expect(player.gold).toBe(START_INCOME);
   });
 
   it("research costs gold, takes time and tier 3 costs more than tier 2", () => {
@@ -315,13 +349,41 @@ describe("combat", () => {
     expect(battle.players[1].gold - gold).toBe(START_INCOME * 60); // no bounty for a breach
   });
 
+  it("cheap units breach for at least the minimum, swarm critters for their cost", () => {
+    const battle = noTowers();
+    spawnUnit(battle, 0, "runner", 0).x = FIELD_WIDTH - 1;
+    run(battle, 5);
+    expect(battle.players[1].baseHp).toBe(BASE_HP - BREACH_MIN);
+    expect(breachDamage("swarm")).toBe(unitCard("swarm").cost);
+  });
+
+  it("slayers deal double damage to higher-tier units only", () => {
+    const hit = (target: string) => {
+      const battle = noTowers();
+      const spear = spawnUnit(battle, 0, "spearman", 1, 0);
+      const victim = spawnUnit(battle, 1, target, 1);
+      spear.x = 500;
+      victim.x = 540;
+      victim.frozenTicks = 1000;
+      const before = victim.hp;
+      step(battle);
+      return before - victim.hp;
+    };
+    expect(hit("footman")).toBe(unitCard("spearman").damage);
+    expect(hit("golem")).toBe(unitCard("spearman").damage * 2);
+  });
+
   it("bases shoot enemies that come close", () => {
     const battle = noTowers();
     const runner = spawnUnit(battle, 1, "runner", 0);
     runner.x = TURRET.range - 1;
     runner.frozenTicks = 1000;
     step(battle);
-    expect(runner.hp).toBe(runner.maxHp - TURRET.damage);
+    expect(runner.hp).toBe(runner.maxHp - TURRET.earlyDamage);
+    battle.tick = TURRET_EARLY_TICKS;
+    battle.players[0].turretCooldown = 0;
+    step(battle);
+    expect(runner.hp).toBe(runner.maxHp - TURRET.earlyDamage - TURRET.damage);
   });
 
   it("opposing melee units meet in the middle and fight to the death", () => {
@@ -676,7 +738,7 @@ describe("fliers", () => {
     const base = noTowers();
     const balloon = flier(base, "balloon", TURRET.range - 1);
     step(base);
-    expect(balloon.hp).toBe(balloon.maxHp - TURRET.damage);
+    expect(balloon.hp).toBe(balloon.maxHp - TURRET.earlyDamage);
   });
 
   it("hawks can't knock down towers", () => {

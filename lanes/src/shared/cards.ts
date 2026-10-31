@@ -29,6 +29,8 @@ export interface UnitCard {
   attackTicks: number;
   /** Radius around the target that also takes the hit. */
   splash?: number;
+  /** Damage multiplier against units of a higher tier. */
+  slayer?: number;
   /** Copies spawned each wave. */
   count?: number;
   /** Flies over the board: ignores ground-only attackers and doesn't hold the shrine. */
@@ -84,8 +86,8 @@ export const CARDS: Record<string, Card> = Object.fromEntries(
     unit({ id: "runner", name: "Runner", tier: 1, role: "fast", cost: 20, bounty: 4, hp: 50, damage: 8, range: 20, speed: 90, attackTicks: 12, text: "Very fast, fragile." }),
     unit({ id: "bomber", name: "Bomber", tier: 2, role: "splash", cost: 45, bounty: 9, hp: 70, damage: 18, range: 110, speed: 32, attackTicks: 40, splash: 50, text: "Ranged blasts hit groups." }),
     unit({ id: "medic", name: "Medic", tier: 1, role: "healer", cost: 40, bounty: 8, hp: 70, damage: 10, range: 100, speed: 36, attackTicks: 20, text: "Heals the most hurt ally nearby." }),
-    unit({ id: "spearman", name: "Spearman", tier: 1, role: "melee", cost: 35, bounty: 7, hp: 140, damage: 16, range: 50, speed: 38, attackTicks: 22, hits: "both", text: "Long reach that hits fliers too." }),
-    unit({ id: "swarm", name: "Swarm", tier: 1, role: "fast", cost: 30, bounty: 2, hp: 30, damage: 5, range: 18, speed: 70, attackTicks: 10, count: 3, text: "Three quick critters per wave." }),
+    unit({ id: "spearman", name: "Spearman", tier: 1, role: "melee", cost: 35, bounty: 7, hp: 140, damage: 16, range: 50, speed: 38, attackTicks: 22, hits: "both", slayer: 2, text: "Long reach that hits fliers; double damage to higher-tier units." }),
+    unit({ id: "swarm", name: "Swarm", tier: 1, role: "fast", cost: 30, bounty: 2, hp: 30, damage: 5, range: 18, speed: 70, attackTicks: 10, count: 3, slayer: 2, text: "Three quick critters; double damage to higher-tier units." }),
     unit({ id: "knight", name: "Knight", tier: 2, role: "melee", cost: 60, bounty: 12, hp: 220, damage: 25, range: 26, speed: 50, attackTicks: 20, text: "Strong and quick melee." }),
     unit({ id: "sniper", name: "Sniper", tier: 2, role: "ranged", cost: 55, bounty: 11, hp: 50, damage: 40, range: 260, speed: 30, attackTicks: 60, hits: "both", text: "Huge range, slow shots. Hits fliers." }),
     unit({ id: "golem", name: "Golem", tier: 3, role: "tank", cost: 90, bounty: 18, hp: 900, damage: 30, range: 28, speed: 18, attackTicks: 40, text: "A walking wall." }),
